@@ -50,6 +50,7 @@ model User {
   referralDiscount  Boolean     @default(false)
   referralCount     Int         @default(0)
   referralRewards   Int         @default(0)
+  role              Role        @default(USER)
   accounts          Account[]
   sessions          Session[]
   subscriptions     Subscription[]
@@ -98,4 +99,9 @@ model Referral {
   updatedAt     DateTime @updatedAt
 
   @@unique([referrerId, referredId])
+}
+
+enum Role {
+  USER
+  ADMIN
 } 

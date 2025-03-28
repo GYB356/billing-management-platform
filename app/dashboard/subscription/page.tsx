@@ -1,152 +1,130 @@
-'use client';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '@/lib/auth';
+import { redirect } from 'next/navigation';
+import prisma from '@/lib/prisma';
+import SubscriptionManagementPanel from '@/components/subscription/SubscriptionManagementPanel';
 
-import { useEffect, useState } from 'react';
-import { useAuth } from '@/hooks/useAuth';
+async function getSubscriptionData(userId: string) {
+  try {
+    // Get the user's active subscription
+    const subscription = await prisma.subscription.findFirst({
+      where: {
+        userId,
+        // Include active, trialing, past_due, and paused subscriptions
+        status: {
+          in: ['active', 'trialing', 'past_due', 'paused', 'canceled']
+        },
+      },
+      include: {
+        plan: true,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
 
-interface Subscription {
-  id: string;
-  status: string;
-  current_period_start: Date;
-  current_period_end: Date;
-  cancel_at_period_end: boolean;
-  plan: {
-    name: string;
-  };
+    if (!subscription) {
+      return null;
+    }
+
+    // Format the subscription data for the component
+    return {
+      id: subscription.id,
+      status: subscription.status,
+      startDate: subscription.createdAt.toISOString(),
+      endDate: subscription.endedAt ? subscription.endedAt.toISOString() : null,
+      currentPeriodStart: subscription.currentPeriodStart.toISOString(),
+      currentPeriodEnd: subscription.currentPeriodEnd.toISOString(),
+      cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
+      trialEndsAt: subscription.trialEndsAt ? subscription.trialEndsAt.toISOString() : null,
+      plan: {
+        id: subscription.plan.id,
+        name: subscription.plan.name,
+        description: subscription.plan.description,
+      },
+      quantity: subscription.quantity,
+      stripeSubscriptionId: subscription.stripeSubscriptionId,
+      // We would fetch the latest invoice in a real implementation, 
+      // but this is simplified for the example
+      latestInvoice: subscription.latestInvoiceId ? {
+        status: 'paid', // This would be fetched from Stripe
+        amountDue: subscription.plan.price * subscription.quantity,
+        currency: subscription.plan.currency || 'usd',
+        invoiceUrl: `https://dashboard.stripe.com/invoices/${subscription.latestInvoiceId}`,
+      } : undefined,
+    };
+  } catch (error) {
+    console.error('Error fetching subscription data:', error);
+    return null;
+  }
 }
 
-export default function SubscriptionPage() {
-  const { user } = useAuth();
-  const [subscription, setSubscription] = useState<Subscription | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+async function getAvailablePlans() {
+  try {
+    // Get all published plans
+    const plans = await prisma.plan.findMany({
+      where: {
+        isPublished: true,
+      },
+      orderBy: {
+        price: 'asc',
+      },
+    });
 
-  useEffect(() => {
-    fetchSubscription();
-  }, []);
+    return plans.map(plan => ({
+      id: plan.id,
+      name: plan.name,
+      description: plan.description || '',
+      price: plan.price,
+      currency: plan.currency || 'usd',
+      interval: plan.interval || 'month',
+      features: plan.features ? JSON.parse(plan.features) : [],
+      isPopular: plan.isPopular || false,
+    }));
+  } catch (error) {
+    console.error('Error fetching available plans:', error);
+    return [];
+  }
+}
 
-  const fetchSubscription = async () => {
-    try {
-      const response = await fetch('/api/stripe/subscription');
-      const data = await response.json();
-
-      if (data.error) {
-        throw new Error(data.error);
-      }
-
-      setSubscription(data.subscription);
-    } catch (error) {
-      console.error('Error fetching subscription:', error);
-      setError('Failed to load subscription details');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleSubscriptionAction = async (action: 'cancel' | 'resume') => {
-    try {
-      const response = await fetch('/api/stripe/subscription', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ action }),
-      });
-
-      const data = await response.json();
-
-      if (data.error) {
-        throw new Error(data.error);
-      }
-
-      setSubscription(data.subscription);
-    } catch (error) {
-      console.error('Error managing subscription:', error);
-      setError('Failed to update subscription');
-    }
-  };
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
-      </div>
-    );
+export default async function SubscriptionPage() {
+  const session = await getServerSession(authOptions);
+  
+  // Redirect to login if not authenticated
+  if (!session?.user) {
+    redirect('/auth/signin');
   }
 
-  if (error) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-red-600">{error}</div>
-      </div>
-    );
-  }
-
-  if (!subscription) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-screen">
-        <h2 className="text-2xl font-bold mb-4">No Active Subscription</h2>
-        <a
-          href="/pricing"
-          className="text-indigo-600 hover:text-indigo-500"
-        >
-          View Plans
-        </a>
-      </div>
-    );
-  }
+  const subscription = await getSubscriptionData(session.user.id);
+  const availablePlans = await getAvailablePlans();
 
   return (
-    <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
-      <div className="px-4 py-6 sm:px-0">
-        <div className="bg-white shadow rounded-lg p-6">
-          <h2 className="text-2xl font-bold mb-6">Subscription Details</h2>
-
-          <div className="space-y-4">
-            <div>
-              <h3 className="text-lg font-medium">Current Plan</h3>
-              <p className="text-gray-600">{subscription.plan.name}</p>
+    <div className="max-w-4xl mx-auto px-4 py-8">
+      <h1 className="text-2xl font-bold mb-6">Subscription Management</h1>
+      
+      {subscription ? (
+        <SubscriptionManagementPanel 
+          subscription={subscription} 
+          availablePlans={availablePlans}
+        />
+      ) : (
+        <div className="bg-white shadow rounded-lg overflow-hidden">
+          <div className="px-4 py-5 sm:p-6">
+            <h3 className="text-lg font-medium text-gray-900">No active subscription</h3>
+            <div className="mt-3 text-sm text-gray-500">
+              <p>You don't have an active subscription yet.</p>
             </div>
-
-            <div>
-              <h3 className="text-lg font-medium">Status</h3>
-              <p className="text-gray-600 capitalize">{subscription.status}</p>
-            </div>
-
-            <div>
-              <h3 className="text-lg font-medium">Billing Period</h3>
-              <p className="text-gray-600">
-                {new Date(subscription.current_period_start).toLocaleDateString()} -{' '}
-                {new Date(subscription.current_period_end).toLocaleDateString()}
-              </p>
-            </div>
-
-            <div>
-              <h3 className="text-lg font-medium">Auto-renewal</h3>
-              <p className="text-gray-600">
-                {subscription.cancel_at_period_end ? 'Disabled' : 'Enabled'}
-              </p>
-            </div>
-
-            <div className="pt-4">
-              {subscription.cancel_at_period_end ? (
-                <button
-                  onClick={() => handleSubscriptionAction('resume')}
-                  className="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-500"
-                >
-                  Resume Subscription
-                </button>
-              ) : (
-                <button
-                  onClick={() => handleSubscriptionAction('cancel')}
-                  className="bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-500"
-                >
-                  Cancel Subscription
-                </button>
-              )}
+            <div className="mt-5">
+              <a
+                href="/dashboard/subscription/checkout"
+                className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+              >
+                Choose a plan
+              </a>
             </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 } 

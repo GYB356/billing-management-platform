@@ -1,145 +1,145 @@
-'use client';
+import PricingTable from '@/components/pricing/PricingTable';
+import prisma from '@/lib/prisma';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { useSession } from 'next-auth/react';
+export const metadata = {
+  title: 'Pricing Plans',
+  description: 'Choose the right plan for your needs',
+};
 
-const PLANS = [
-  {
-    id: 'basic',
-    name: 'Basic Plan',
-    price: '$9.99',
-    interval: 'month',
-    features: [
-      'Basic features',
-      'Up to 5 projects',
-      'Email support',
-      'Basic analytics',
-    ],
-  },
-  {
-    id: 'pro',
-    name: 'Pro Plan',
-    price: '$29.99',
-    interval: 'month',
-    features: [
-      'All Basic features',
-      'Unlimited projects',
-      'Priority support',
-      'Advanced analytics',
-      'Custom integrations',
-    ],
-    popular: true,
-  },
-  {
-    id: 'enterprise',
-    name: 'Enterprise Plan',
-    price: '$99.99',
-    interval: 'month',
-    features: [
-      'All Pro features',
-      'Custom integrations',
-      'Dedicated support',
-      'SLA guarantee',
-      'Advanced security',
-      'Custom branding',
-    ],
-  },
-];
+export const revalidate = 3600; // Revalidate at most once per hour
 
-export default function PricingPage() {
-  const router = useRouter();
-  const { data: session } = useSession();
-  const [isLoading, setIsLoading] = useState<string | null>(null);
-
-  const handleSubscribe = async (planId: string) => {
-    if (!session) {
-      router.push('/auth/signin');
-      return;
-    }
-
-    setIsLoading(planId);
-    try {
-      const response = await fetch('/api/stripe/create-checkout', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+async function getActivePlans() {
+  const plans = await prisma.pricingPlan.findMany({
+    where: {
+      isActive: true,
+      isPublic: true,
+    },
+    include: {
+      tiers: true,
+      planFeatures: {
+        include: {
+          feature: true,
         },
-        body: JSON.stringify({ planId }),
-      });
+      },
+    },
+    orderBy: {
+      sortOrder: 'asc',
+    },
+  });
 
-      const data = await response.json();
+  return plans;
+}
 
-      if (data.error) {
-        throw new Error(data.error);
-      }
+async function getFeatures() {
+  const features = await prisma.planFeature.findMany({
+    orderBy: [
+      {
+        isHighlighted: 'desc',
+      },
+      {
+        name: 'asc',
+      },
+    ],
+  });
 
-      window.location.href = data.url;
-    } catch (error) {
-      console.error('Error creating checkout session:', error);
-      setIsLoading(null);
-    }
-  };
+  return features;
+}
+
+export default async function PricingPage() {
+  const [plans, features] = await Promise.all([getActivePlans(), getFeatures()]);
 
   return (
-    <div className="bg-gray-50 py-24 sm:py-32">
-      <div className="mx-auto max-w-7xl px-6 lg:px-8">
-        <div className="mx-auto max-w-4xl text-center">
-          <h2 className="text-base font-semibold leading-7 text-indigo-600">
-            Pricing
-          </h2>
-          <p className="mt-2 text-4xl font-bold tracking-tight text-gray-900 sm:text-5xl">
-            Choose the right plan for your business
+    <div className="bg-gray-50">
+      <div className="max-w-7xl mx-auto py-24 px-4 sm:px-6 lg:px-8">
+        <div className="sm:flex sm:flex-col sm:align-center">
+          <h1 className="text-5xl font-extrabold text-gray-900 sm:text-center">Pricing Plans</h1>
+          <p className="mt-5 text-xl text-gray-500 sm:text-center">
+            Start building today with the right plan for your needs.
           </p>
+          <div className="mt-12 space-y-4 sm:mt-16 sm:space-y-0 w-full">
+            <PricingTable
+              plans={plans}
+              features={features}
+              showAnnualToggle={true}
+              currency="USD"
+              onSelectPlan={(planId) => {
+                // This will be handled by client-side JS
+                console.log(`Selected plan: ${planId}`);
+              }}
+            />
+          </div>
         </div>
-        <div className="isolate mx-auto mt-16 grid max-w-md grid-cols-1 gap-y-8 sm:mt-20 lg:mx-0 lg:max-w-none lg:grid-cols-3">
-          {PLANS.map((plan) => (
-            <div
-              key={plan.id}
-              className={`flex flex-col justify-between rounded-3xl bg-white p-8 ring-1 ring-gray-200 xl:p-10 ${
-                plan.popular ? 'lg:z-10 lg:rounded-b-none' : ''
-              }`}
-            >
-              <div>
-                <div className="flex items-center justify-between gap-x-4">
-                  <h3
-                    className={`text-lg font-semibold leading-8 ${
-                      plan.popular ? 'text-indigo-600' : 'text-gray-900'
-                    }`}
-                  >
-                    {plan.name}
-                  </h3>
-                  {plan.popular && (
-                    <span className="rounded-full bg-indigo-600/10 px-2.5 py-1 text-xs font-semibold leading-5 text-indigo-600">
-                      Most popular
-                    </span>
-                  )}
-                </div>
-                <p className="mt-4 text-sm leading-6 text-gray-600">
-                  {plan.features.join(', ')}
-                </p>
-                <p className="mt-6 flex items-baseline gap-x-1">
-                  <span className="text-4xl font-bold tracking-tight text-gray-900">
-                    {plan.price}
-                  </span>
-                  <span className="text-sm font-semibold leading-6 text-gray-600">
-                    /{plan.interval}
-                  </span>
+        
+        <div className="mt-16 border-t border-gray-200 pt-16">
+          <h2 className="text-3xl font-extrabold text-gray-900 sm:text-center">Frequently asked questions</h2>
+          <div className="mt-6 grid gap-6 grid-cols-1 md:grid-cols-2">
+            <div>
+              <h3 className="text-lg font-medium text-gray-900">How do your trial periods work?</h3>
+              <p className="mt-2 text-base text-gray-500">
+                Our trial periods allow you to test the full capabilities of our platform risk-free. 
+                You can cancel anytime during the trial period without being charged.
+              </p>
+            </div>
+            <div>
+              <h3 className="text-lg font-medium text-gray-900">Can I change plans later?</h3>
+              <p className="mt-2 text-base text-gray-500">
+                Yes, you can upgrade or downgrade your plan at any time. Upgrades take effect immediately, 
+                while downgrades will take effect at the end of your current billing cycle.
+              </p>
+            </div>
+            <div>
+              <h3 className="text-lg font-medium text-gray-900">What payment methods do you accept?</h3>
+              <p className="mt-2 text-base text-gray-500">
+                We accept all major credit cards, debit cards, and PayPal. For annual Enterprise plans, 
+                we can also accommodate wire transfers and invoicing.
+              </p>
+            </div>
+            <div>
+              <h3 className="text-lg font-medium text-gray-900">How does billing work?</h3>
+              <p className="mt-2 text-base text-gray-500">
+                You'll be billed at the start of each billing cycle. For monthly plans, that's every 30 days, 
+                and for annual plans, that's once per year. All plans include automatic renewals, which you can disable in your account settings.
+              </p>
+            </div>
+            <div>
+              <h3 className="text-lg font-medium text-gray-900">Do you offer refunds?</h3>
+              <p className="mt-2 text-base text-gray-500">
+                We offer a 14-day money-back guarantee for all plans if you're not satisfied with our service. 
+                For any issues or refund requests, please contact our support team.
+              </p>
+            </div>
+            <div>
+              <h3 className="text-lg font-medium text-gray-900">Do you offer discounts?</h3>
+              <p className="mt-2 text-base text-gray-500">
+                Yes, we offer discounts for annual subscriptions, educational institutions, and non-profit organizations. 
+                Contact our sales team for more information.
+              </p>
+            </div>
+          </div>
+        </div>
+        
+        <div className="mt-16 sm:align-center sm:flex sm:flex-col">
+          <div className="rounded-2xl bg-indigo-50 py-10 px-6 sm:px-12">
+            <div className="lg:grid lg:grid-cols-3 lg:gap-8">
+              <div className="lg:col-span-2">
+                <h3 className="text-xl font-medium text-indigo-900">Custom pricing for enterprise</h3>
+                <p className="mt-4 text-lg text-indigo-600">
+                  Need a custom solution for your organization? Our enterprise plans offer additional features, 
+                  dedicated support, and customizable options to meet your specific requirements.
                 </p>
               </div>
-              <button
-                onClick={() => handleSubscribe(plan.id)}
-                disabled={isLoading === plan.id}
-                className={`mt-8 block rounded-md px-3 py-2 text-center text-sm font-semibold leading-6 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${
-                  plan.popular
-                    ? 'bg-indigo-600 text-white hover:bg-indigo-500 focus-visible:outline-indigo-600'
-                    : 'bg-white text-indigo-600 ring-1 ring-inset ring-indigo-200 hover:ring-indigo-300'
-                }`}
-              >
-                {isLoading === plan.id ? 'Processing...' : 'Subscribe'}
-              </button>
+              <div className="mt-8 flex lg:mt-0 lg:justify-end">
+                <div className="flex-shrink-0 self-center">
+                  <a
+                    href="/contact"
+                    className="inline-flex items-center rounded-md border border-transparent bg-indigo-600 px-6 py-3 text-base font-medium text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+                  >
+                    Contact Sales
+                  </a>
+                </div>
+              </div>
             </div>
-          ))}
+          </div>
         </div>
       </div>
     </div>

@@ -3,10 +3,12 @@
 import { useAuth } from '@/hooks/useAuth';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import NotificationBell from '@/components/NotificationBell';
 
 const navigation = [
   { name: 'Overview', href: '/dashboard' },
   { name: 'Subscription', href: '/dashboard/subscription' },
+  { name: 'Usage', href: '/dashboard/usage' },
   { name: 'Invoices', href: '/dashboard/invoices' },
 ];
 
@@ -76,6 +78,10 @@ export default function DashboardLayout({
           <main className="flex-1">
             <div className="py-6">
               <div className="mx-auto max-w-7xl px-4 sm:px-6 md:px-8">
+                <div className="flex items-center gap-4">
+                  <NotificationBell />
+                  {/* Other header items */}
+                </div>
                 {children}
               </div>
             </div>

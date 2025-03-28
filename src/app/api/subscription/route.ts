@@ -4,13 +4,20 @@ import { authOptions } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import Stripe from 'stripe';
 import { SUBSCRIPTION_PLANS } from '@/lib/stripe';
+import { createSubscriptionAuditMiddleware } from '@/lib/middleware/audit';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: '2023-10-16',
 });
 
-export async function GET() {
+// Create the audit middleware for subscription routes
+const auditSubscription = createSubscriptionAuditMiddleware();
+
+export async function GET(req: Request) {
   try {
+    // Log this action with audit middleware
+    await auditSubscription(req);
+    
     const session = await getServerSession(authOptions);
 
     if (!session?.user?.email) {
@@ -49,6 +56,9 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
+    // Log this action with audit middleware
+    await auditSubscription(request);
+    
     const session = await getServerSession(authOptions);
 
     if (!session?.user?.email) {
@@ -124,8 +134,11 @@ export async function POST(request: Request) {
   }
 }
 
-export async function DELETE() {
+export async function DELETE(request: Request) {
   try {
+    // Log this action with audit middleware
+    await auditSubscription(request);
+    
     const session = await getServerSession(authOptions);
 
     if (!session?.user?.email) {

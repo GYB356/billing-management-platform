@@ -41,9 +41,12 @@ export default function SignIn() {
 
   const handleGoogleSignIn = async () => {
     try {
+      setIsLoading(true);
       await signIn("google", { callbackUrl: "/dashboard" });
     } catch (error) {
-      setError("Failed to sign in with Google");
+      console.error("Sign in error:", error);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -113,10 +116,11 @@ export default function SignIn() {
           <div className="mt-6">
             <button
               onClick={handleGoogleSignIn}
-              className="w-full flex items-center justify-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+              disabled={isLoading}
+              className="w-full flex items-center justify-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
             >
               <FcGoogle className="h-5 w-5 mr-2" />
-              Sign in with Google
+              {isLoading ? "Signing in..." : "Sign in with Google"}
             </button>
           </div>
         </div>

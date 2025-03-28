@@ -5,6 +5,12 @@
   "installCommand": "npm install",
   "framework": "nextjs",
   "regions": ["fra1"],
+  "crons": [
+    {
+      "path": "/api/cron/usage-report?key=${CRON_SECRET_KEY}",
+      "schedule": "0 0 * * *"
+    }
+  ],
   "env": {
     "NEXTAUTH_URL": "https://${VERCEL_URL}",
     "NEXTAUTH_SECRET": "@nextauth-secret",
@@ -21,7 +27,8 @@
     "SMTP_PASSWORD": "@smtp-password",
     "EMAIL_FROM": "@email-from",
     "ENABLE_REFERRAL_PROGRAM": "true",
-    "ENABLE_EMAIL_NOTIFICATIONS": "true"
+    "ENABLE_EMAIL_NOTIFICATIONS": "true",
+    "CRON_SECRET_KEY": "@cron-secret-key"
   },
   "build": {
     "env": {

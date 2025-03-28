@@ -1,0 +1,54 @@
+100:
+  - name: "Authentication Tests"
+    desc: "Test authentication endpoints for vulnerabilities"
+    urls:
+      - "http://localhost:3000/api/auth/login"
+      - "http://localhost:3000/api/auth/register"
+      - "http://localhost:3000/api/auth/password/reset"
+    tests:
+      - name: "SQL Injection"
+        type: "active"
+        desc: "Test for SQL injection vulnerabilities"
+      - name: "XSS"
+        type: "active"
+        desc: "Test for cross-site scripting vulnerabilities"
+      - name: "CSRF"
+        type: "active"
+        desc: "Test for cross-site request forgery vulnerabilities"
+      - name: "Brute Force"
+        type: "active"
+        desc: "Test for brute force attack vulnerabilities"
+
+200:
+  - name: "Security Endpoint Tests"
+    desc: "Test security monitoring endpoints for vulnerabilities"
+    urls:
+      - "http://localhost:3000/api/admin/security/reports"
+      - "http://localhost:3000/api/admin/security/events"
+      - "http://localhost:3000/api/admin/security/suspicious"
+    tests:
+      - name: "Authorization Bypass"
+        type: "active"
+        desc: "Test for authorization bypass vulnerabilities"
+      - name: "Information Disclosure"
+        type: "active"
+        desc: "Test for information disclosure vulnerabilities"
+      - name: "Rate Limiting"
+        type: "active"
+        desc: "Test rate limiting effectiveness"
+
+300:
+  - name: "API Security Tests"
+    desc: "Test API endpoints for general security vulnerabilities"
+    urls:
+      - "http://localhost:3000/api/**"
+    tests:
+      - name: "Input Validation"
+        type: "active"
+        desc: "Test input validation and sanitization"
+      - name: "Error Handling"
+        type: "active"
+        desc: "Test error handling and information leakage"
+      - name: "Security Headers"
+        type: "passive"
+        desc: "Test security headers configuration" 

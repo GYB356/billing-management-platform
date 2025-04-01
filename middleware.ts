@@ -2,6 +2,7 @@ import { withAuth } from "next-auth/middleware";
 import { NextResponse } from "next/server";
 import { Ratelimit } from "@upstash/ratelimit";
 import { Redis } from "@upstash/redis";
+import { getToken } from "next-auth/jwt";
 
 // Initialize rate limiter
 const ratelimit = new Ratelimit({
@@ -27,14 +28,18 @@ export default withAuth(
       });
     }
 
-    const token = req.nextauth.token;
-    const isAdminRoute = req.nextUrl.pathname.startsWith("/admin");
-    const isApiRoute = req.nextUrl.pathname.startsWith("/api");
+    const token = await getToken({ req, secret: process.env.JWT_SECRET });
+    const url = req.nextUrl.clone();
 
-    // Enhanced role validation
-    if (isAdminRoute && token?.role !== "ADMIN") {
-      return NextResponse.redirect(new URL("/dashboard", req.url));
+    // Protect admin routes
+    if (url.pathname.startsWith('/admin')) {
+      if (!token || token.role !== 'ADMIN') {
+        url.pathname = '/';
+        return NextResponse.redirect(url);
+      }
     }
+
+    const isApiRoute = req.nextUrl.pathname.startsWith("/api");
 
     // API route protection
     if (isApiRoute) {
@@ -69,4 +74,4 @@ export const config = {
     "/settings/:path*",
     "/api/:path*",
   ],
-}; 
+};

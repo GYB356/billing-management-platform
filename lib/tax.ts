@@ -1,4 +1,4 @@
-import { prisma } from "./prisma";
+import { prisma } from "@/lib/prisma";
 import { TaxRate } from "@prisma/client";
 import { stripe } from "./stripe";
 import { createEvent, EventSeverity } from "./events";
@@ -371,4 +371,27 @@ export async function calculateSubscriptionTax({
     total: subtotal + taxAmount,
     taxExempt: false,
   };
-} 
+}
+
+/**
+ * Add tax exemption certificate for an organization
+ */
+export async function addTaxExemptionCertificate(organizationId: string, certificateUrl: string) {
+  return prisma.organization.update({
+    where: { id: organizationId },
+    data: {
+      taxExemptionCertificate: certificateUrl,
+    },
+  });
+}
+
+/**
+ * Validate tax exemption for an organization
+ */
+export async function validateTaxExemption(organizationId: string): Promise<boolean> {
+  const organization = await prisma.organization.findUnique({
+    where: { id: organizationId },
+  });
+
+  return !!organization?.taxExemptionCertificate;
+}

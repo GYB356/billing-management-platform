@@ -2,6 +2,7 @@
 
 import { useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
 import SubscriptionAnalytics from '@/components/admin/subscriptions/SubscriptionAnalytics';
 import SubscriptionFilters from '@/components/admin/subscriptions/SubscriptionFilters';
 import SubscriptionTable from '@/components/admin/subscriptions/SubscriptionTable';
@@ -14,56 +15,54 @@ async function getSubscriptions(searchParams: URLSearchParams) {
   return response.json();
 }
 
-export default function SubscriptionsPage() {
-  const searchParams = useSearchParams();
-  const currentPage = Number(searchParams.get('page')) || 1;
-  const pageSize = 10;
+export default function SubscriptionManagement() {
+  const [subscriptions, setSubscriptions] = useState([]);
 
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['subscriptions', searchParams.toString()],
-    queryFn: () => getSubscriptions(searchParams),
-  });
+  useEffect(() => {
+    async function fetchSubscriptions() {
+      const response = await fetch('/api/admin/subscriptions');
+      const data = await response.json();
+      setSubscriptions(data);
+    }
+    fetchSubscriptions();
+  }, []);
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-indigo-600"></div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-red-600">Failed to load subscriptions</div>
-      </div>
-    );
-  }
+  const updateSubscription = async (id, status) => {
+    await fetch(`/api/admin/subscriptions/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    });
+    // Refresh subscriptions
+    fetchSubscriptions();
+  };
 
   return (
-    <div className="space-y-6">
-      <div className="sm:flex sm:items-center">
-        <div className="sm:flex-auto">
-          <h1 className="text-2xl font-semibold text-gray-900">Subscriptions</h1>
-          <p className="mt-2 text-sm text-gray-700">
-            A list of all subscriptions in your account including their status and
-            billing information.
-          </p>
-        </div>
-      </div>
-
-      <SubscriptionAnalytics />
-
-      <div className="flex items-center justify-between">
-        <SubscriptionFilters />
-      </div>
-
-      <SubscriptionTable
-        subscriptions={data?.subscriptions || []}
-        totalCount={data?.totalCount || 0}
-        currentPage={currentPage}
-        pageSize={pageSize}
-      />
+    <div>
+      <h1>Subscription Management</h1>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>User</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {subscriptions.map((sub) => (
+            <tr key={sub.id}>
+              <td>{sub.id}</td>
+              <td>{sub.userId}</td>
+              <td>{sub.status}</td>
+              <td>
+                <button onClick={() => updateSubscription(sub.id, 'ACTIVE')}>Activate</button>
+                <button onClick={() => updateSubscription(sub.id, 'CANCELED')}>Cancel</button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

@@ -1,0 +1,42 @@
+### Generate 2FA Secret and QR Code
+GET http://localhost:3000/api/auth/2fa/setup
+Authorization: Bearer {{your_jwt_token}}
+
+###
+
+### Verify and Enable 2FA
+POST http://localhost:3000/api/auth/2fa/verify
+Authorization: Bearer {{your_jwt_token}}
+Content-Type: application/json
+
+{
+  "token": "123456"
+}
+
+###
+
+### Validate 2FA Token
+PUT http://localhost:3000/api/auth/2fa/validate
+Authorization: Bearer {{your_jwt_token}}
+Content-Type: application/json
+
+{
+  "token": "123456"
+}
+
+###
+
+### Verify Backup Code
+PATCH http://localhost:3000/api/auth/2fa/backup
+Authorization: Bearer {{your_jwt_token}}
+Content-Type: application/json
+
+{
+  "code": "backup-code"
+}
+
+###
+
+### Disable 2FA
+DELETE http://localhost:3000/api/auth/2fa
+Authorization: Bearer {{your_jwt_token}}

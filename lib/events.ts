@@ -1,306 +1,301 @@
-import { prisma } from "./prisma";
-import { auth } from "./auth";
-import { headers } from "next/headers";
+import prisma from '@/lib/prisma';
+import { getServerSession } from 'next-auth';
+import { authOptions } from './auth';
+import { headers } from 'next/headers';
 
-// Interface for creating an event
-interface CreateEventParams {
+// Interface for createEvent parameters
+export interface CreateEventParams {
   organizationId?: string;
   userId?: string;
   eventType: string;
   resourceType: string;
   resourceId: string;
   metadata?: Record<string, any>;
-  ipAddress?: string;
-  userAgent?: string;
   severity?: EventSeverity;
 }
 
-// Event severity levels
+// Enum for event severity levels
 export enum EventSeverity {
-  INFO = "INFO",
-  WARNING = "WARNING",
-  ERROR = "ERROR",
-  CRITICAL = "CRITICAL",
+  INFO = 'INFO',
+  WARNING = 'WARNING',
+  ERROR = 'ERROR',
+  CRITICAL = 'CRITICAL'
 }
 
 /**
- * Create an audit event
+ * Creates a new event in the system
  */
-export async function createEvent({
-  organizationId,
-  userId,
-  eventType,
-  resourceType,
-  resourceId,
-  metadata = {},
-  ipAddress,
-  userAgent,
-  severity = EventSeverity.INFO,
-}: CreateEventParams) {
-  // Try to get the current user if not provided
-  if (!userId) {
-    const session = await auth();
-    userId = session?.user?.id;
-  }
-
-  // Try to get request information if not provided
-  if (!ipAddress || !userAgent) {
-    const headersList = headers();
-    ipAddress = ipAddress || headersList.get("x-forwarded-for") || 
-                            headersList.get("x-real-ip") || 
-                            "unknown";
-    userAgent = userAgent || headersList.get("user-agent") || "unknown";
-  }
-
-  // Add request information to metadata
-  const eventMetadata = {
-    ...metadata,
-    request: {
-      ipAddress,
-      userAgent,
-    }
-  };
-
-  // Create the event
-  const event = await prisma.event.create({
-    data: {
+export async function createEvent(params: CreateEventParams) {
+  try {
+    // Destructure params
+    const {
       organizationId,
       userId,
       eventType,
       resourceType,
       resourceId,
-      severity,
-      metadata: eventMetadata,
-    },
-  });
+      metadata = {},
+      severity = EventSeverity.INFO
+    } = params;
 
-  return event;
+    // If no user ID is provided, try to get it from the session
+    let userIdToUse = userId;
+    
+    if (!userIdToUse) {
+      try {
+        const session = await getServerSession(authOptions);
+        if (session?.user?.id) {
+          userIdToUse = session.user.id;
+        }
+      } catch (error) {
+        // Continue without user ID if session cannot be retrieved
+        console.log('Could not get user from session:', error);
+      }
+    }
+
+    // Create the event
+    const event = await prisma.event.create({
+      data: {
+        eventType,
+        resourceType,
+        resourceId,
+        organizationId,
+        userId: userIdToUse,
+        metadata,
+        severity,
+      },
+    });
+
+    // Process event for webhooks (using dynamic import to avoid circular dependencies)
+    if (organizationId) {
+      try {
+        // Dynamically import the webhook service to avoid circular dependencies
+        const { processEventForWebhooks } = await import('./services/event-webhook-service');
+        
+        // Process the event asynchronously
+        processEventForWebhooks(event.id).catch(error => {
+          console.error('Error processing webhook for event:', error);
+        });
+      } catch (error) {
+        console.error('Error importing webhook service:', error);
+      }
+    }
+
+    return event;
+  } catch (error) {
+    console.error('Error creating event:', error);
+    throw error;
+  }
 }
 
 /**
- * Get events for an organization
+ * Gets events for an organization
  */
-export async function getOrganizationEvents(
+export async function getEventsForOrganization(
   organizationId: string,
-  limit: number = 50,
-  offset: number = 0,
-  filters?: {
-    eventType?: string;
-    resourceType?: string;
-    resourceId?: string;
-    severity?: EventSeverity;
+  options: {
+    limit?: number;
+    offset?: number;
+    eventTypes?: string[];
+    resourceTypes?: string[];
+    resourceIds?: string[];
     startDate?: Date;
     endDate?: Date;
-  }
+    severity?: EventSeverity[];
+  } = {}
 ) {
-  // Build the where clause
-  const where: any = {
-    organizationId,
-  };
+  const {
+    limit = 100,
+    offset = 0,
+    eventTypes,
+    resourceTypes,
+    resourceIds,
+    startDate,
+    endDate,
+    severity,
+  } = options;
 
-  // Add optional filters
-  if (filters) {
-    if (filters.eventType) {
-      where.eventType = filters.eventType;
-    }
-    if (filters.resourceType) {
-      where.resourceType = filters.resourceType;
-    }
-    if (filters.resourceId) {
-      where.resourceId = filters.resourceId;
-    }
-    if (filters.severity) {
-      where.severity = filters.severity;
-    }
-    if (filters.startDate || filters.endDate) {
-      where.timestamp = {};
-      if (filters.startDate) {
-        where.timestamp.gte = filters.startDate;
-      }
-      if (filters.endDate) {
-        where.timestamp.lte = filters.endDate;
-      }
-    }
+  // Build query
+  const where: any = { organizationId };
+
+  if (eventTypes && eventTypes.length > 0) {
+    where.eventType = { in: eventTypes };
   }
 
-  // Get the events
-  const events = await prisma.event.findMany({
-    where,
-    orderBy: {
-      timestamp: "desc",
-    },
-    take: limit,
-    skip: offset,
-    include: {
-      user: {
-        select: {
-          id: true,
-          name: true,
-          email: true,
-        },
-      },
-    },
-  });
+  if (resourceTypes && resourceTypes.length > 0) {
+    where.resourceType = { in: resourceTypes };
+  }
 
-  // Get the total count
-  const totalCount = await prisma.event.count({
-    where,
-  });
+  if (resourceIds && resourceIds.length > 0) {
+    where.resourceId = { in: resourceIds };
+  }
+
+  if (startDate || endDate) {
+    where.timestamp = {};
+    if (startDate) where.timestamp.gte = startDate;
+    if (endDate) where.timestamp.lte = endDate;
+  }
+
+  if (severity && severity.length > 0) {
+    where.severity = { in: severity };
+  }
+
+  // Execute query
+  const [events, total] = await Promise.all([
+    prisma.event.findMany({
+      where,
+      orderBy: { timestamp: 'desc' },
+      take: limit,
+      skip: offset,
+    }),
+    prisma.event.count({ where }),
+  ]);
 
   return {
     events,
-    totalCount,
+    meta: {
+      total,
+      limit,
+      offset,
+    },
   };
 }
 
 /**
- * Get events for a user
+ * Gets events for a user
  */
-export async function getUserEvents(
+export async function getEventsForUser(
   userId: string,
-  limit: number = 50,
-  offset: number = 0,
-  filters?: {
-    eventType?: string;
-    resourceType?: string;
-    resourceId?: string;
-    severity?: EventSeverity;
+  options: {
+    limit?: number;
+    offset?: number;
+    eventTypes?: string[];
+    resourceTypes?: string[];
+    resourceIds?: string[];
     startDate?: Date;
     endDate?: Date;
-  }
+    severity?: EventSeverity[];
+  } = {}
 ) {
-  // Build the where clause
-  const where: any = {
-    userId,
-  };
+  const {
+    limit = 100,
+    offset = 0,
+    eventTypes,
+    resourceTypes,
+    resourceIds,
+    startDate,
+    endDate,
+    severity,
+  } = options;
 
-  // Add optional filters
-  if (filters) {
-    if (filters.eventType) {
-      where.eventType = filters.eventType;
-    }
-    if (filters.resourceType) {
-      where.resourceType = filters.resourceType;
-    }
-    if (filters.resourceId) {
-      where.resourceId = filters.resourceId;
-    }
-    if (filters.severity) {
-      where.severity = filters.severity;
-    }
-    if (filters.startDate || filters.endDate) {
-      where.timestamp = {};
-      if (filters.startDate) {
-        where.timestamp.gte = filters.startDate;
-      }
-      if (filters.endDate) {
-        where.timestamp.lte = filters.endDate;
-      }
-    }
+  // Build query
+  const where: any = { userId };
+
+  if (eventTypes && eventTypes.length > 0) {
+    where.eventType = { in: eventTypes };
   }
 
-  // Get the events
-  const events = await prisma.event.findMany({
-    where,
-    orderBy: {
-      timestamp: "desc",
-    },
-    take: limit,
-    skip: offset,
-    include: {
-      organization: {
-        select: {
-          id: true,
-          name: true,
-        },
-      },
-    },
-  });
+  if (resourceTypes && resourceTypes.length > 0) {
+    where.resourceType = { in: resourceTypes };
+  }
 
-  // Get the total count
-  const totalCount = await prisma.event.count({
-    where,
-  });
+  if (resourceIds && resourceIds.length > 0) {
+    where.resourceId = { in: resourceIds };
+  }
+
+  if (startDate || endDate) {
+    where.timestamp = {};
+    if (startDate) where.timestamp.gte = startDate;
+    if (endDate) where.timestamp.lte = endDate;
+  }
+
+  if (severity && severity.length > 0) {
+    where.severity = { in: severity };
+  }
+
+  // Execute query
+  const [events, total] = await Promise.all([
+    prisma.event.findMany({
+      where,
+      orderBy: { timestamp: 'desc' },
+      take: limit,
+      skip: offset,
+    }),
+    prisma.event.count({ where }),
+  ]);
 
   return {
     events,
-    totalCount,
+    meta: {
+      total,
+      limit,
+      offset,
+    },
   };
 }
 
 /**
- * Get events for a specific resource
+ * Gets events for a specific resource
  */
-export async function getResourceEvents(
+export async function getEventsForResource(
   resourceType: string,
   resourceId: string,
-  limit: number = 50,
-  offset: number = 0,
-  filters?: {
-    eventType?: string;
-    severity?: EventSeverity;
+  options: {
+    limit?: number;
+    offset?: number;
+    eventTypes?: string[];
     startDate?: Date;
     endDate?: Date;
-  }
+    severity?: EventSeverity[];
+  } = {}
 ) {
-  // Build the where clause
+  const {
+    limit = 100,
+    offset = 0,
+    eventTypes,
+    startDate,
+    endDate,
+    severity,
+  } = options;
+
+  // Build query
   const where: any = {
     resourceType,
     resourceId,
   };
 
-  // Add optional filters
-  if (filters) {
-    if (filters.eventType) {
-      where.eventType = filters.eventType;
-    }
-    if (filters.severity) {
-      where.severity = filters.severity;
-    }
-    if (filters.startDate || filters.endDate) {
-      where.timestamp = {};
-      if (filters.startDate) {
-        where.timestamp.gte = filters.startDate;
-      }
-      if (filters.endDate) {
-        where.timestamp.lte = filters.endDate;
-      }
-    }
+  if (eventTypes && eventTypes.length > 0) {
+    where.eventType = { in: eventTypes };
   }
 
-  // Get the events
-  const events = await prisma.event.findMany({
-    where,
-    orderBy: {
-      timestamp: "desc",
-    },
-    take: limit,
-    skip: offset,
-    include: {
-      user: {
-        select: {
-          id: true,
-          name: true,
-          email: true,
-        },
-      },
-      organization: {
-        select: {
-          id: true,
-          name: true,
-        },
-      },
-    },
-  });
+  if (startDate || endDate) {
+    where.timestamp = {};
+    if (startDate) where.timestamp.gte = startDate;
+    if (endDate) where.timestamp.lte = endDate;
+  }
 
-  // Get the total count
-  const totalCount = await prisma.event.count({
-    where,
-  });
+  if (severity && severity.length > 0) {
+    where.severity = { in: severity };
+  }
+
+  // Execute query
+  const [events, total] = await Promise.all([
+    prisma.event.findMany({
+      where,
+      orderBy: { timestamp: 'desc' },
+      take: limit,
+      skip: offset,
+    }),
+    prisma.event.count({ where }),
+  ]);
 
   return {
     events,
-    totalCount,
+    meta: {
+      total,
+      limit,
+      offset,
+    },
   };
 }
 

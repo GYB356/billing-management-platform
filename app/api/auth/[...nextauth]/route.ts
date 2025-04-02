@@ -1,75 +1,53 @@
-import NextAuth from "next-auth";
-import GoogleProvider from "next-auth/providers/google";
-import CredentialsProvider from "next-auth/providers/credentials";
-import { PrismaAdapter } from "@auth/prisma-adapter";
-import { PrismaClient } from "@prisma/client";
-import bcrypt from "bcryptjs";
+import NextAuth from 'next-auth';
+import CredentialsProvider from 'next-auth/providers/credentials';
+import { PrismaClient } from '@prisma/client';
+import bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
 
 const handler = NextAuth({
-  adapter: PrismaAdapter(prisma),
   providers: [
-    GoogleProvider({
-      clientId: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-    }),
     CredentialsProvider({
-      name: "credentials",
+      name: 'Credentials',
       credentials: {
-        email: { label: "Email", type: "email" },
-        password: { label: "Password", type: "password" }
+        email: { label: 'Email', type: 'text' },
+        password: { label: 'Password', type: 'password' },
       },
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) {
-          throw new Error("Invalid credentials");
+          throw new Error('Missing email or password');
         }
 
+        // Fetch user from the database
         const user = await prisma.user.findUnique({
-          where: {
-            email: credentials.email
-          }
+          where: { email: credentials.email },
         });
 
-        if (!user || !user?.hashedPassword) {
-          throw new Error("Invalid credentials");
+        if (!user) {
+          throw new Error('Invalid email or password');
         }
 
-        const isCorrectPassword = await bcrypt.compare(
-          credentials.password,
-          user.hashedPassword
-        );
-
-        if (!isCorrectPassword) {
-          throw new Error("Invalid credentials");
+        // Compare the provided password with the hashed password
+        const isPasswordValid = await bcrypt.compare(credentials.password, user.password);
+        if (!isPasswordValid) {
+          throw new Error('Invalid email or password');
         }
 
+        // Return the user object if authentication is successful
         return user;
-      }
-    })
+      },
+    }),
   ],
-  session: {
-    strategy: "jwt",
-  },
-  secret: process.env.NEXTAUTH_SECRET,
-  debug: process.env.NODE_ENV === "development",
-  pages: {
-    signIn: "/auth/signin",
-  },
   callbacks: {
-    async jwt({ token, user }) {
-      if (user) {
-        token.role = user.role;
+    async redirect({ url, baseUrl }) {
+      // If the URL is a relative path, redirect to it
+      if (url.startsWith('/')) {
+        return `${baseUrl}${url}`;
       }
-      return token;
-    },
-    async session({ session, token }) {
-      if (session?.user) {
-        session.user.role = token.role;
-      }
-      return session;
+      // Otherwise, fallback to the base URL
+      return baseUrl;
     },
   },
 });
 
-export { handler as GET, handler as POST }; 
+export { handler as GET, handler as POST };

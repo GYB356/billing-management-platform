@@ -1,0 +1,180 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                String             @id @default(cuid())
+  name              String?
+  email             String             @unique
+  password          String?
+  role              UserRole           @default(USER)
+  status            UserStatus         @default(ACTIVE)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  userOrganizations UserOrganization[]
+
+  @@index([email])
+  @@map("users")
+}
+
+enum UserRole {
+  ADMIN
+  USER
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+model Organization {
+  id                String             @id @default(cuid())
+  name              String
+  email             String?            @unique
+  phone             String?
+  address           String?
+  city              String?
+  state             String?
+  country           String?
+  postalCode        String?
+  taxId             String?
+  settings          Json?              @default("{}")
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  userOrganizations UserOrganization[]
+  subscriptions     Subscription[]
+  invoices          Invoice[]
+  taxRates          TaxRate[]
+  taxExemptions     TaxExemption[]
+  customers         Customer[]
+
+  @@map("organizations")
+}
+
+model UserOrganization {
+  id             String       @id @default(cuid())
+  userId         String
+  organizationId String
+  role           String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([userId, organizationId])
+  @@map("user_organizations")
+}
+
+model Customer {
+  id             String         @id @default(cuid())
+  organizationId String
+  name           String
+  email          String?
+  phone          String?
+  address        String?
+  city           String?
+  state          String?
+  country        String?
+  postalCode     String?
+  taxId          String?
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invoices       Invoice[]
+  taxExemptions  TaxExemption[]
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@unique([organizationId, email])
+  @@map("customers")
+}
+
+model Subscription {
+  id             String       @id @default(cuid())
+  organizationId String
+  name           String
+  description    String?
+  price          Float
+  billingPeriod  String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@map("subscriptions")
+}
+
+model Invoice {
+  id             String       @id @default(cuid())
+  organizationId String
+  customerId     String
+  number         String
+  status         String
+  dueDate        DateTime
+  subtotal       Float
+  total          Float
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer       Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  taxes          InvoiceTax[]
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([organizationId, number])
+  @@map("invoices")
+}
+
+model TaxRate {
+  id             String         @id @default(cuid())
+  organizationId String
+  name           String
+  rate           Float
+  country        String
+  state          String?
+  city           String?
+  description    String?
+  isActive       Boolean        @default(true)
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invoiceTaxes   InvoiceTax[]
+  taxExemptions  TaxExemption[]
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@unique([organizationId, country, state, city])
+  @@map("tax_rates")
+}
+
+model TaxExemption {
+  id             String       @id @default(cuid())
+  organizationId String
+  customerId     String
+  taxRateId      String
+  startDate      DateTime
+  endDate        DateTime?
+  reason         String?
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer       Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  taxRate        TaxRate     @relation(fields: [taxRateId], references: [id], onDelete: Cascade)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  @@unique([customerId, taxRateId])
+  @@map("tax_exemptions")
+}
+
+model InvoiceTax {
+  id         String   @id @default(cuid())
+  invoiceId  String
+  taxRateId  String
+  amount     Float
+  isExempt   Boolean  @default(false)
+  invoice    Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  taxRate    TaxRate  @relation(fields: [taxRateId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([invoiceId, taxRateId])
+  @@map("invoice_taxes")
+} 

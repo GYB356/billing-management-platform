@@ -182,6 +182,8 @@ model PricingPlan {
   planFeatures   PlanFeatureAssociation[]
   subscriptions  Subscription[]
   promotionPlans PromotionPlan[]
+  pricingRules   PricingRule[]
+  currencyRelation Currency? @relation(fields: [currency], references: [code])
 }
 
 model PricingTier {
@@ -228,28 +230,17 @@ model FeatureCategory {
 }
 
 model Feature {
-  id          String   @id @default(cuid())
-  name        String
-  code        String   @unique
-  description String?
-  type        String // BOOLEAN, NUMERIC, METERED
-  unit        String?
-  isPublic    Boolean  @default(true)
-  metadata    Json?    @default("{}")
-  sortOrder   Int      @default(0)
-  categoryId  String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  // Relations
-  category      FeatureCategory?         @relation(fields: [categoryId], references: [id])
-  planFeatures  PlanFeatureAssociation[]
-  usageRecords  UsageRecord[]
-  notifications UsageNotification[]
-
-  @@index([code])
-  @@index([categoryId])
-  @@map("features")
+  id             String           @id @default(uuid())
+  name           String
+  code           String           @unique
+  description    String?
+  unitLabel      String?          // e.g. "API calls", "GB", "users"
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  pricingRules   PricingRule[]
+  usageRecords   UsageRecord[]
+  usageCharges   UsageCharge[]
+  usageLimits    UsageLimit[]
 }
 
 model PlanFeatureAssociation {
@@ -348,6 +339,13 @@ model Customer {
   taxExemptions  TaxExemption[]
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
+  usageRecords   UsageRecord[]
+  usageLimits    UsageLimit[]
+  dunningLogs    DunningLog[]
+  preferredCurrency String?
+  currency          Currency?   @relation(fields: [preferredCurrency], references: [code])
+  preferredLocale   String?
+  locale            Locale?     @relation(fields: [preferredLocale], references: [code])
 
   @@unique([organizationId, email])
   @@map("customers")
@@ -366,6 +364,7 @@ model Subscription {
   trialEndsAt          DateTime?
   cancelAtPeriodEnd    Boolean            @default(false)
   canceledAt           DateTime?
+  cancellationReason   String?
   isPaused             Boolean            @default(false)
   pausedAt             DateTime?
   resumesAt            DateTime?
@@ -377,6 +376,10 @@ model Subscription {
   metadata             Json?              @default("{}")
   createdAt            DateTime           @default(now())
   updatedAt            DateTime           @updatedAt
+  couponId             String?
+  coupon               Coupon?            @relation(fields: [couponId], references: [id])
+  currency             String             @default("USD")
+  currencyRelation     Currency?          @relation(fields: [currency], references: [code])
 
   // Relations
   organization         Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -385,6 +388,9 @@ model Subscription {
   pauseHistory         PauseHistory[]
   usageRecords         UsageRecord[]
   usageNotifications   UsageNotification[]
+  usageCharges         UsageCharge[]
+  dunningLogs          DunningLog[]
+  paymentAttempts      PaymentAttempt[]
 
   @@index([organizationId])
   @@index([status])
@@ -431,6 +437,11 @@ model Invoice {
   taxes          InvoiceTax[]
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
+  dunningLogs    DunningLog[]
+  paymentAttempts PaymentAttempt[]
+  currency       String       @default("USD")
+  currencyRelation Currency?  @relation(fields: [currency], references: [code])
+  exchangeRate   Float?       // Exchange rate at the time of invoice creation
 
   @@unique([organizationId, number])
   @@map("invoices")
@@ -593,15 +604,20 @@ enum DiscountType {
 }
 
 model Coupon {
-  id              String    @id @default(cuid())
-  promotionId     String
-  code            String    @unique
-  active          Boolean   @default(true)
-  redemptionCount Int       @default(0)
-  maxRedemptions  Int?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-  promotion       Promotion @relation(fields: [promotionId], references: [id])
+  id             String           @id @default(uuid())
+  code           String           @unique
+  description    String?
+  discountType   String           // 'percentage', 'fixed_amount'
+  discountAmount Float            // Either percentage or fixed amount
+  currency       String?          // Required for fixed_amount
+  maxRedemptions Int?             // Maximum number of redemptions
+  redemptionCount Int             @default(0)
+  startsAt       DateTime         @default(now())
+  expiresAt      DateTime?
+  metadata       String?          @db.Text // JSON string for additional metadata
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  subscriptions  Subscription[]   // Subscriptions that have applied this coupon
 
   @@index([code])
   @@index([promotionId])
@@ -639,16 +655,17 @@ enum PaymentStatus {
 
 // Translation model for storing internationalization content
 model Translation {
-  id        String   @id @default(cuid())
-  key       String
-  locale    String
-  value     String   @db.Text
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id              String       @id @default(uuid())
+  locale          String
+  namespace       String       // e.g., "email", "invoice", "dashboard"
+  key             String
+  value           String       @db.Text
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
 
-  @@unique([key, locale])
+  @@unique([locale, namespace, key])
   @@index([locale])
-  @@index([key])
+  @@index([namespace])
 }
 
 // User preferences model for storing user-specific settings
@@ -737,27 +754,18 @@ model Alert {
 }
 
 model UsageRecord {
-  id                  String        @id @default(cuid())
-  featureId           String
-  userId              String?
-  organizationId      String?
-  subscriptionId      String?
-  quantity            Int
-  timestamp           DateTime      @default(now())
-  metadata            Json?         @default("{}")
-  feature             Feature       @relation(fields: [featureId], references: [id], onDelete: Cascade)
-  user                User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
-  organization        Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
-  subscription        Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
-  reportedToStripe    Boolean       @default(false)
-  stripeUsageRecordId String?
+  id             String           @id @default(uuid())
+  customerId     String
+  customer       Customer         @relation(fields: [customerId], references: [id])
+  featureId      String
+  feature        Feature          @relation(fields: [featureId], references: [id])
+  quantity       Float
+  timestamp      DateTime         @default(now())
+  metadataJson   String?          @db.Text // JSON string for additional metadata
+  createdAt      DateTime         @default(now())
 
-  @@index([featureId])
-  @@index([userId])
-  @@index([organizationId])
-  @@index([timestamp])
-  @@index([subscriptionId])
-  @@map("usage_records")
+  @@index([customerId, featureId, timestamp])
+  @@index([featureId, timestamp])
 }
 
 model UsageTier {
@@ -864,4 +872,169 @@ model Event {
   @@index([userId])
   @@index([timestamp])
   @@map("events")
+}
+
+model PricingRule {
+  id             String           @id @default(uuid())
+  planId         String
+  plan           PricingPlan      @relation(fields: [planId], references: [id])
+  featureId      String
+  feature        Feature          @relation(fields: [featureId], references: [id])
+  type           String           // 'metered', 'tiered', 'volume', 'flat_fee'
+  unitAmount     Float            // The per-unit price
+  currency       String           @default("USD")
+  meteredAggregate String?        // 'sum', 'max', 'count' - how to aggregate metered usage
+  tiersJson      String?          @db.Text // JSON string for pricing tiers
+  freeQuantity   Float?           // Free units before charging starts
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@unique([planId, featureId])
+}
+
+model UsageCharge {
+  id                   String     @id @default(uuid())
+  subscriptionId       String
+  subscription         Subscription @relation(fields: [subscriptionId], references: [id])
+  featureId            String
+  feature              Feature    @relation(fields: [featureId], references: [id])
+  billingPeriodStart   DateTime
+  billingPeriodEnd     DateTime
+  amount               Float      // Calculated charge amount
+  quantity             Float      // Total usage quantity
+  currency             String     @default("USD")
+  status               String     // 'pending', 'charged', 'canceled'
+  invoiceId            String?    // Reference to invoice when charged
+  createdAt            DateTime   @default(now())
+  updatedAt            DateTime   @updatedAt
+
+  @@unique([subscriptionId, featureId, billingPeriodStart])
+  @@index([subscriptionId, status])
+}
+
+model UsageLimit {
+  id             String           @id @default(uuid())
+  customerId     String
+  customer       Customer         @relation(fields: [customerId], references: [id])
+  featureId      String
+  feature        Feature          @relation(fields: [featureId], references: [id])
+  limit          Float            // Maximum allowed usage
+  alertThreshold Float?           // Optional alert threshold (percentage)
+  alertSent      Boolean          @default(false)
+  resetPeriod    String?          // 'monthly', 'quarterly', 'annual', or null for no reset
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@unique([customerId, featureId])
+}
+
+// Dunning configuration
+model DunningConfig {
+  id          String    @id @default(uuid())
+  name        String
+  description String?
+  isActive    Boolean   @default(false)
+  stepsJson   String    @db.Text  // JSON string of dunning steps
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+// Dunning logs
+model DunningLog {
+  id            String      @id @default(uuid())
+  customerId    String
+  customer      Customer    @relation(fields: [customerId], references: [id])
+  subscriptionId String
+  subscription  Subscription @relation(fields: [subscriptionId], references: [id])
+  invoiceId     String?
+  invoice       Invoice?    @relation(fields: [invoiceId], references: [id])
+  stepNumber    Int
+  action        String
+  status        String      // 'pending', 'success', 'failed'
+  notes         String?
+  metadataJson  String?     @db.Text
+  createdAt     DateTime    @default(now())
+
+  @@index([customerId])
+  @@index([subscriptionId])
+  @@index([invoiceId])
+  @@index([createdAt])
+}
+
+// Payment attempts for dunning
+model PaymentAttempt {
+  id               String      @id @default(uuid())
+  subscriptionId   String
+  subscription     Subscription @relation(fields: [subscriptionId], references: [id])
+  invoiceId        String?
+  invoice          Invoice?    @relation(fields: [invoiceId], references: [id])
+  amount           Float
+  currency         String
+  status           String      // 'pending', 'succeeded', 'failed'
+  failureCode      String?
+  failureMessage   String?
+  paymentMethodId  String?
+  paymentMethod    PaymentMethod? @relation(fields: [paymentMethodId], references: [id])
+  createdAt        DateTime    @default(now())
+
+  @@index([subscriptionId])
+  @@index([invoiceId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model PaymentMethod {
+  id             String           @id @default(uuid())
+  type           String           // 'card', 'bank_transfer', etc.
+  details        Json             // JSON object with payment method details
+  isDefault      Boolean          @default(false)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  paymentAttempts PaymentAttempt[]
+}
+
+// Currency configuration
+model Currency {
+  code            String       @id @map("currency_code")
+  name            String
+  symbol          String
+  decimalPlaces   Int          @default(2)
+  isDefault       Boolean      @default(false)
+  isActive        Boolean      @default(true)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  // Relations
+  plans           Plan[]
+  invoices        Invoice[]
+  usageCharges    UsageCharge[]
+  paymentAttempts PaymentAttempt[]
+  subscriptions   Subscription[]
+  customers       Customer[]   // Default display currency for customers
+}
+
+// Exchange rates between currencies
+model ExchangeRate {
+  sourceCurrency  String
+  targetCurrency  String
+  rate            Float
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@id([sourceCurrency, targetCurrency])
+  @@index([sourceCurrency])
+  @@index([targetCurrency])
+}
+
+// Add locale model for language support
+model Locale {
+  code            String       @id // e.g., "en-US", "fr-FR", "de-DE"
+  name            String       // e.g., "English (US)", "French", "German"
+  isDefault       Boolean      @default(false)
+  isActive        Boolean      @default(true)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  // Relations
+  customers       Customer[]
 }

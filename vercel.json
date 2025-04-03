@@ -1,0 +1,57 @@
+{
+  "version": 2,
+  "buildCommand": "npm run build",
+  "devCommand": "npm run dev",
+  "installCommand": "npm install",
+  "framework": "nextjs",
+  "regions": ["fra1"],
+  "crons": [
+    {
+      "path": "/api/cron/usage-report?key=${CRON_SECRET_KEY}",
+      "schedule": "0 0 * * *"
+    }
+  ],
+  "env": {
+    "NEXTAUTH_URL": "https://${VERCEL_URL}",
+    "NEXTAUTH_SECRET": "@nextauth-secret",
+    "DATABASE_URL": "@database-url",
+    "STRIPE_SECRET_KEY": "@stripe-secret-key",
+    "STRIPE_PUBLISHABLE_KEY": "@stripe-publishable-key",
+    "STRIPE_WEBHOOK_SECRET": "@stripe-webhook-secret",
+    "STRIPE_PRICE_ID_BASIC": "@stripe-price-id-basic",
+    "STRIPE_PRICE_ID_PRO": "@stripe-price-id-pro",
+    "STRIPE_PRICE_ID_ENTERPRISE": "@stripe-price-id-enterprise",
+    "SMTP_HOST": "@smtp-host",
+    "SMTP_PORT": "@smtp-port",
+    "SMTP_USER": "@smtp-user",
+    "SMTP_PASSWORD": "@smtp-password",
+    "EMAIL_FROM": "@email-from",
+    "ENABLE_REFERRAL_PROGRAM": "true",
+    "ENABLE_EMAIL_NOTIFICATIONS": "true",
+    "CRON_SECRET_KEY": "@cron-secret-key"
+  },
+  "build": {
+    "env": {
+      "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY": "@stripe-publishable-key"
+    }
+  },
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "DENY"
+        },
+        {
+          "key": "X-XSS-Protection",
+          "value": "1; mode=block"
+        }
+      ]
+    }
+  ]
+}

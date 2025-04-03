@@ -1,0 +1,51 @@
+{
+  "formats": {
+    "title": "格式偏好",
+    "description": "自定义日期、数字和货币的显示方式",
+    "date": {
+      "label": "日期格式",
+      "short": "短格式 (DD/MM/YYYY)",
+      "long": "长格式 (YYYY年MM月DD日)",
+      "numeric": "数字格式 (YYYY-MM-DD)"
+    },
+    "number": {
+      "label": "数字格式",
+      "standard": "标准 (1,234.56)",
+      "compact": "紧凑 (1.2K)",
+      "scientific": "科学计数 (1.23e+3)"
+    },
+    "currency": {
+      "label": "货币格式",
+      "symbol": "符号 (¥1,234.56)",
+      "code": "代码 (CNY 1,234.56)",
+      "name": "名称 (1,234.56 人民币)"
+    },
+    "save": "保存偏好",
+    "saveSuccess": "格式偏好保存成功"
+  },
+  "settings": {
+    "formats": {
+      "title": "格式设置",
+      "description": "自定义信息显示方式"
+    }
+  },
+  "errors": {
+    "fetchPreferences": "加载格式偏好失败",
+    "savePreferences": "保存格式偏好失败"
+  },
+  "invoice": {
+    "title": "发票号 {{number}}",
+    "status": {
+      "paid": "已支付",
+      "pending": "待支付",
+      "overdue": "已逾期"
+    },
+    "issueDate": "开具日期",
+    "dueDate": "到期日期",
+    "items": "项目",
+    "quantity": "数量：{{count}}",
+    "subtotal": "小计",
+    "tax": "税费",
+    "total": "总计"
+  }
+} 

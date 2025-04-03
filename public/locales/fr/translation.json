@@ -1,0 +1,36 @@
+{
+  "formats": {
+    "title": "Préférences de Format",
+    "description": "Personnalisez l'affichage des dates, des nombres et des devises",
+    "date": {
+      "label": "Format de Date",
+      "short": "Court (JJ/MM/AAAA)",
+      "long": "Long (Jour Mois AAAA)",
+      "numeric": "Numérique (AAAA-MM-JJ)"
+    },
+    "number": {
+      "label": "Format des Nombres",
+      "standard": "Standard (1 234,56)",
+      "compact": "Compact (1,2K)",
+      "scientific": "Scientifique (1,23e+3)"
+    },
+    "currency": {
+      "label": "Format de la Devise",
+      "symbol": "Symbole (1 234,56 €)",
+      "code": "Code (EUR 1 234,56)",
+      "name": "Nom (1 234,56 Euros)"
+    },
+    "save": "Enregistrer les Préférences",
+    "saveSuccess": "Préférences de format enregistrées avec succès"
+  },
+  "settings": {
+    "formats": {
+      "title": "Paramètres de Format",
+      "description": "Personnalisez l'affichage des informations"
+    }
+  },
+  "errors": {
+    "fetchPreferences": "Échec de la récupération des préférences de format",
+    "savePreferences": "Échec de l'enregistrement des préférences de format"
+  }
+} 

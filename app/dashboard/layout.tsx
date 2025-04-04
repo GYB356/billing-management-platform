@@ -4,19 +4,24 @@ import { useAuth } from '@/hooks/useAuth';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import NotificationBell from '@/components/NotificationBell';
+import { LanguageSelector } from '@/components/i18n/LanguageSelector';
 
 const navigation = [
   { name: 'Overview', href: '/dashboard' },
   { name: 'Subscription', href: '/dashboard/subscription' },
+  { name: 'Payment Methods', href: '/dashboard/payment-methods' },
   { name: 'Usage', href: '/dashboard/usage' },
   { name: 'Invoices', href: '/dashboard/invoices' },
+  { name: 'Tax Management', href: '/tax' },
 ];
 
 const adminNavigation = [
   { name: 'Overview', href: '/dashboard' },
   { name: 'Subscriptions', href: '/dashboard/admin/subscriptions' },
+  { name: 'Payment Methods', href: '/dashboard/payment-methods' },
   { name: 'Users', href: '/dashboard/admin/users' },
   { name: 'Analytics', href: '/dashboard/admin/analytics' },
+  { name: 'Tax Management', href: '/tax' },
 ];
 
 export default function DashboardLayout({
@@ -80,6 +85,7 @@ export default function DashboardLayout({
               <div className="mx-auto max-w-7xl px-4 sm:px-6 md:px-8">
                 <div className="flex items-center gap-4">
                   <NotificationBell />
+                  <LanguageSelector variant="minimal" />
                   {/* Other header items */}
                 </div>
                 {children}

@@ -1,0 +1,51 @@
+{
+  "formats": {
+    "title": "フォーマット設定",
+    "description": "日付、数値、通貨の表示方法をカスタマイズ",
+    "date": {
+      "label": "日付フォーマット",
+      "short": "短い形式 (DD/MM/YYYY)",
+      "long": "長い形式 (YYYY年MM月DD日)",
+      "numeric": "数値形式 (YYYY-MM-DD)"
+    },
+    "number": {
+      "label": "数値フォーマット",
+      "standard": "標準 (1,234.56)",
+      "compact": "コンパクト (1.2K)",
+      "scientific": "科学的表記 (1.23e+3)"
+    },
+    "currency": {
+      "label": "通貨フォーマット",
+      "symbol": "記号 (¥1,234.56)",
+      "code": "コード (JPY 1,234.56)",
+      "name": "名称 (1,234.56 日本円)"
+    },
+    "save": "設定を保存",
+    "saveSuccess": "フォーマット設定を保存しました"
+  },
+  "settings": {
+    "formats": {
+      "title": "フォーマット設定",
+      "description": "情報の表示方法をカスタマイズ"
+    }
+  },
+  "errors": {
+    "fetchPreferences": "フォーマット設定の読み込みに失敗しました",
+    "savePreferences": "フォーマット設定の保存に失敗しました"
+  },
+  "invoice": {
+    "title": "請求書番号 {{number}}",
+    "status": {
+      "paid": "支払済",
+      "pending": "支払待ち",
+      "overdue": "支払期限超過"
+    },
+    "issueDate": "発行日",
+    "dueDate": "支払期限",
+    "items": "項目",
+    "quantity": "数量：{{count}}",
+    "subtotal": "小計",
+    "tax": "税",
+    "total": "合計"
+  }
+} 

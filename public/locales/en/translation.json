@@ -1,0 +1,36 @@
+{
+  "formats": {
+    "title": "Format Preferences",
+    "description": "Customize how dates, numbers, and currencies are displayed",
+    "date": {
+      "label": "Date Format",
+      "short": "Short (MM/DD/YYYY)",
+      "long": "Long (Month DD, YYYY)",
+      "numeric": "Numeric (YYYY-MM-DD)"
+    },
+    "number": {
+      "label": "Number Format",
+      "standard": "Standard (1,234.56)",
+      "compact": "Compact (1.2K)",
+      "scientific": "Scientific (1.23e+3)"
+    },
+    "currency": {
+      "label": "Currency Format",
+      "symbol": "Symbol ($1,234.56)",
+      "code": "Code (USD 1,234.56)",
+      "name": "Name (1,234.56 US Dollars)"
+    },
+    "save": "Save Preferences",
+    "saveSuccess": "Format preferences saved successfully"
+  },
+  "settings": {
+    "formats": {
+      "title": "Format Settings",
+      "description": "Customize how information is displayed"
+    }
+  },
+  "errors": {
+    "fetchPreferences": "Failed to fetch format preferences",
+    "savePreferences": "Failed to save format preferences"
+  }
+} 

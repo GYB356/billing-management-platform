@@ -1,5 +1,10 @@
+<<<<<<< HEAD
 import { prisma } from "./prisma";
+import { TaxRate, Invoice, Customer, TaxExemption } from "@prisma/client";
+=======
+import { prisma } from "@/lib/prisma";
 import { TaxRate } from "@prisma/client";
+>>>>>>> 58d4a3da7158e64e5700c51b28776197a8d974c9
 import { stripe } from "./stripe";
 import { createEvent, EventSeverity } from "./events";
 
@@ -371,4 +376,287 @@ export async function calculateSubscriptionTax({
     total: subtotal + taxAmount,
     taxExempt: false,
   };
+}
+
+<<<<<<< HEAD
+export interface TaxCalculationResult {
+  taxRateId: string;
+  taxRateName: string;
+  taxRate: number;
+  taxableAmount: number;
+  taxAmount: number;
+  isExempt: boolean;
+}
+
+export async function calculateInvoiceTaxes(
+  invoice: Invoice,
+  customer: Customer
+): Promise<TaxCalculationResult[]> {
+  try {
+    // Get all active tax rates for the customer's location
+    const taxRates = await prisma.taxRate.findMany({
+      where: {
+        organizationId: invoice.organizationId,
+        country: customer.country,
+        state: customer.state,
+        city: customer.city,
+        isActive: true,
+      },
+    });
+
+    // Get all valid tax exemptions for the customer
+    const taxExemptions = await prisma.taxExemption.findMany({
+      where: {
+        organizationId: invoice.organizationId,
+        customerId: customer.id,
+        startDate: {
+          lte: invoice.createdAt,
+        },
+        OR: [
+          { endDate: null },
+          { endDate: { gte: invoice.createdAt } },
+        ],
+      },
+      include: {
+        taxRate: true,
+      },
+    });
+
+    // Calculate taxes for each tax rate
+    const results: TaxCalculationResult[] = [];
+
+    for (const taxRate of taxRates) {
+      // Check if there's a valid exemption for this tax rate
+      const exemption = taxExemptions.find(
+        (ex) => ex.taxRateId === taxRate.id
+      );
+
+      const taxableAmount = invoice.subtotal;
+      const taxAmount = exemption ? 0 : (taxableAmount * taxRate.rate) / 100;
+
+      results.push({
+        taxRateId: taxRate.id,
+        taxRateName: taxRate.name,
+        taxRate: taxRate.rate,
+        taxableAmount,
+        taxAmount,
+        isExempt: !!exemption,
+      });
+    }
+
+    return results;
+  } catch (error) {
+    console.error('Error calculating invoice taxes:', error);
+    throw error;
+  }
+}
+
+export async function applyTaxesToInvoice(
+  invoiceId: string,
+  customerId: string
+): Promise<void> {
+  try {
+    // Get invoice and customer details
+    const invoice = await prisma.invoice.findUnique({
+      where: { id: invoiceId },
+      include: {
+        customer: true,
+      },
+    });
+
+    if (!invoice || !invoice.customer) {
+      throw new Error('Invoice or customer not found');
+    }
+
+    // Calculate taxes
+    const taxCalculations = await calculateInvoiceTaxes(
+      invoice,
+      invoice.customer
+    );
+
+    // Create tax records and update invoice total
+    const totalTaxAmount = taxCalculations.reduce(
+      (sum, calc) => sum + calc.taxAmount,
+      0
+    );
+
+    // Create tax records
+    await Promise.all(
+      taxCalculations.map((calc) =>
+        prisma.invoiceTax.create({
+          data: {
+            invoiceId,
+            taxRateId: calc.taxRateId,
+            amount: calc.taxAmount,
+            isExempt: calc.isExempt,
+          },
+        })
+      )
+    );
+
+    // Update invoice total
+    await prisma.invoice.update({
+      where: { id: invoiceId },
+      data: {
+        total: invoice.subtotal + totalTaxAmount,
+      },
+    });
+  } catch (error) {
+    console.error('Error applying taxes to invoice:', error);
+    throw error;
+  }
+}
+
+export async function getTaxSummary(
+  organizationId: string,
+  startDate: Date,
+  endDate: Date
+): Promise<{
+  taxRateId: string;
+  taxRateName: string;
+  taxRate: number;
+  totalAmount: number;
+  invoiceCount: number;
+}[]> {
+  try {
+    // Get all invoice tax records for the period
+    const invoiceTaxes = await prisma.invoiceTax.findMany({
+      where: {
+        invoice: {
+          organizationId,
+          createdAt: {
+            gte: startDate,
+            lte: endDate,
+          },
+        },
+      },
+      include: {
+        taxRate: true,
+      },
+    });
+
+    // Group by tax rate and calculate totals
+    const summary = invoiceTaxes.reduce((acc, curr) => {
+      const existing = acc.find((item) => item.taxRateId === curr.taxRateId);
+
+      if (existing) {
+        existing.totalAmount += curr.amount;
+        existing.invoiceCount += 1;
+      } else {
+        acc.push({
+          taxRateId: curr.taxRateId,
+          taxRateName: curr.taxRate.name,
+          taxRate: curr.taxRate.rate,
+          totalAmount: curr.amount,
+          invoiceCount: 1,
+        });
+      }
+
+      return acc;
+    }, [] as {
+      taxRateId: string;
+      taxRateName: string;
+      taxRate: number;
+      totalAmount: number;
+      invoiceCount: number;
+    }[]);
+
+    return summary;
+  } catch (error) {
+    console.error('Error getting tax summary:', error);
+    throw error;
+  }
+}
+
+export async function validateTaxExemption(
+  customerId: string,
+  taxRateId: string,
+  date: Date
+): Promise<boolean> {
+  try {
+    const exemption = await prisma.taxExemption.findFirst({
+      where: {
+        customerId,
+        taxRateId,
+        startDate: {
+          lte: date,
+        },
+        OR: [
+          { endDate: null },
+          { endDate: { gte: date } },
+        ],
+      },
+    });
+
+    return !!exemption;
+  } catch (error) {
+    console.error('Error validating tax exemption:', error);
+    throw error;
+  }
+}
+
+export async function getTaxRatesByLocation(
+  organizationId: string,
+  country: string,
+  state?: string,
+  city?: string
+): Promise<{
+  id: string;
+  name: string;
+  rate: number;
+  country: string;
+  state?: string;
+  city?: string;
+}[]> {
+  try {
+    const taxRates = await prisma.taxRate.findMany({
+      where: {
+        organizationId,
+        country,
+        ...(state && { state }),
+        ...(city && { city }),
+        isActive: true,
+      },
+      orderBy: {
+        rate: 'desc',
+      },
+      select: {
+        id: true,
+        name: true,
+        rate: true,
+        country: true,
+        state: true,
+        city: true,
+      },
+    });
+
+    return taxRates;
+  } catch (error) {
+    console.error('Error getting tax rates by location:', error);
+    throw error;
+  }
 } 
+=======
+/**
+ * Add tax exemption certificate for an organization
+ */
+export async function addTaxExemptionCertificate(organizationId: string, certificateUrl: string) {
+  return prisma.organization.update({
+    where: { id: organizationId },
+    data: {
+      taxExemptionCertificate: certificateUrl,
+    },
+  });
+}
+
+/**
+ * Validate tax exemption for an organization
+ */
+export async function validateTaxExemption(organizationId: string): Promise<boolean> {
+  const organization = await prisma.organization.findUnique({
+    where: { id: organizationId },
+  });
+
+  return !!organization?.taxExemptionCertificate;
+}
+>>>>>>> 58d4a3da7158e64e5700c51b28776197a8d974c9

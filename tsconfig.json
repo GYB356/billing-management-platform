@@ -21,7 +21,22 @@
       {
         "name": "next"
       }
-    ]
+    ],
+<<<<<<< HEAD
+    "strictNullChecks": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*", "./*"]
+    }
+=======
+    "baseUrl": ".",
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    },
+    "strictNullChecks": true
+>>>>>>> 58d4a3da7158e64e5700c51b28776197a8d974c9
   },
   "include": [
     "next-env.d.ts",

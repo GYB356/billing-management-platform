@@ -1,0 +1,81 @@
+{
+  "locale": "fr-FR",
+  "translations": {
+    "common": {
+      "save": "Enregistrer",
+      "saving": "Enregistrement...",
+      "cancel": "Annuler",
+      "delete": "Supprimer",
+      "edit": "Modifier",
+      "view": "Voir",
+      "loading": "Chargement...",
+      "error": "Erreur",
+      "success": "Succès",
+      "confirm": "Confirmer"
+    },
+    "settings": {
+      "pageTitle": "Paramètres",
+      "account": {
+        "title": "Compte",
+        "description": "Gérer vos informations de compte et votre profil"
+      },
+      "language": {
+        "title": "Langue",
+        "description": "Modifier les paramètres de langue et de localisation",
+        "selectLabel": "Sélectionnez votre langue préférée",
+        "saveSuccess": "Préférences de langue enregistrées avec succès",
+        "examples": "Exemples de formatage",
+        "dateExample": "Date",
+        "currencyExample": "Devise",
+        "numberExample": "Nombre"
+      },
+      "security": {
+        "title": "Sécurité",
+        "description": "Gérer les mots de passe et les paramètres de sécurité"
+      },
+      "billing": {
+        "title": "Facturation",
+        "description": "Gérer les modes de paiement et les préférences de facturation"
+      },
+      "notifications": {
+        "title": "Notifications",
+        "description": "Configurer les notifications et les alertes"
+      }
+    },
+    "invoice": {
+      "title": "Facture n°{number}",
+      "viewTitle": "Voir la facture",
+      "issueDate": "Date d'émission",
+      "dueDate": "Date d'échéance",
+      "items": "Articles",
+      "quantity": "{count, plural, =1{# article} other{# articles}}",
+      "subtotal": "Sous-total",
+      "tax": "Taxe",
+      "total": "Total",
+      "status": {
+        "paid": "Payée",
+        "pending": "En attente",
+        "overdue": "En retard"
+      },
+      "actions": {
+        "download": "Télécharger PDF",
+        "print": "Imprimer",
+        "pay": "Payer maintenant",
+        "share": "Partager"
+      },
+      "error": {
+        "loading": "Erreur lors du chargement de la facture"
+      },
+      "notFound": "Facture introuvable"
+    },
+    "dashboard": {
+      "title": "Tableau de bord",
+      "welcome": "Bienvenue, {name}",
+      "overview": "Aperçu",
+      "recentActivity": "Activité récente",
+      "activeSubscription": "Abonnement actif",
+      "upcomingInvoice": "Prochaine facture",
+      "usageSummary": "Résumé d'utilisation"
+    }
+  }
+} 

@@ -1,24 +1,15 @@
 'use client';
 
+import { useMemo } from 'react';
 import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  Title,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
   Tooltip,
-  Legend,
-} from 'chart.js';
-import { Bar } from 'react-chartjs-2';
-
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  Title,
-  Tooltip,
-  Legend
-);
+  ResponsiveContainer,
+} from 'recharts';
 
 interface CustomerMetricsProps {
   metrics: {
@@ -30,104 +21,38 @@ interface CustomerMetricsProps {
 }
 
 export default function CustomerMetrics({ metrics }: CustomerMetricsProps) {
-  const data = {
-    labels: ['Total Customers', 'Active Subscribers', 'Trial Users'],
-    datasets: [
+  const data = useMemo(() => {
+    return [
       {
-        label: 'Customer Metrics',
-        data: [
-          metrics.total,
-          metrics.withActiveSubscription,
-          metrics.withTrial,
-        ],
-        backgroundColor: [
-          'rgba(59, 130, 246, 0.5)',
-          'rgba(16, 185, 129, 0.5)',
-          'rgba(245, 158, 11, 0.5)',
-        ],
-        borderColor: [
-          'rgb(59, 130, 246)',
-          'rgb(16, 185, 129)',
-          'rgb(245, 158, 11)',
-        ],
-        borderWidth: 1,
+        name: 'Total Customers',
+        value: metrics.total,
       },
-    ],
-  };
-
-  const options = {
-    responsive: true,
-    plugins: {
-      legend: {
-        display: false,
+      {
+        name: 'Active Subscriptions',
+        value: metrics.withActiveSubscription,
       },
-      title: {
-        display: true,
-        text: 'Customer Overview',
+      {
+        name: 'Trial Users',
+        value: metrics.withTrial,
       },
-    },
-    scales: {
-      y: {
-        beginAtZero: true,
+      {
+        name: 'Churn Rate',
+        value: metrics.churnRate,
       },
-    },
-  };
+    ];
+  }, [metrics]);
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-      <div className="h-[300px]">
-        <Bar data={data} options={options} />
-      </div>
-
-      <div className="space-y-4">
-        <div className="bg-gray-50 p-4 rounded-lg">
-          <h4 className="text-sm font-medium text-gray-500">Customer Statistics</h4>
-          <dl className="mt-2 space-y-2">
-            <div className="flex justify-between">
-              <dt className="text-sm text-gray-600">Total Customers</dt>
-              <dd className="text-sm font-medium text-gray-900">{metrics.total}</dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-sm text-gray-600">Active Subscribers</dt>
-              <dd className="text-sm font-medium text-gray-900">
-                {metrics.withActiveSubscription}
-              </dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-sm text-gray-600">Trial Users</dt>
-              <dd className="text-sm font-medium text-gray-900">{metrics.withTrial}</dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-sm text-gray-600">Churn Rate</dt>
-              <dd className="text-sm font-medium text-gray-900">
-                {metrics.churnRate.toFixed(1)}%
-              </dd>
-            </div>
-          </dl>
-        </div>
-
-        <div className="bg-gray-50 p-4 rounded-lg">
-          <h4 className="text-sm font-medium text-gray-500">Conversion Metrics</h4>
-          <dl className="mt-2 space-y-2">
-            <div className="flex justify-between">
-              <dt className="text-sm text-gray-600">Trial to Paid</dt>
-              <dd className="text-sm font-medium text-gray-900">
-                {metrics.withTrial > 0
-                  ? `${((metrics.withActiveSubscription / metrics.withTrial) * 100).toFixed(1)}%`
-                  : '0%'}
-              </dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-sm text-gray-600">Active Rate</dt>
-              <dd className="text-sm font-medium text-gray-900">
-                {metrics.total > 0
-                  ? `${((metrics.withActiveSubscription / metrics.total) * 100).toFixed(1)}%`
-                  : '0%'}
-              </dd>
-            </div>
-          </dl>
-        </div>
-      </div>
+    <div className="h-[300px]">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={data}>
+          <CartesianGrid strokeDasharray="3 3" />
+          <XAxis dataKey="name" />
+          <YAxis />
+          <Tooltip />
+          <Bar dataKey="value" fill="#8884d8" />
+        </BarChart>
+      </ResponsiveContainer>
     </div>
   );
 } 

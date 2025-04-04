@@ -1,31 +1,33 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { prisma } from '@/lib/prisma';
+import { NotificationService } from '@/lib/notification';
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const session = await getServerSession(authOptions);
 
-    if (!session?.user?.id) {
+    if (!session?.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const notifications = await prisma.notification.findMany({
-      where: {
-        userId: session.user.id,
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-      take: 50,
-    });
+    const { searchParams } = new URL(request.url);
+    const page = parseInt(searchParams.get('page') || '1');
+    const limit = parseInt(searchParams.get('limit') || '10');
 
-    return NextResponse.json({ notifications });
+    const [notifications, unreadCount] = await Promise.all([
+      NotificationService.getUserNotifications(session.user.id, page, limit),
+      NotificationService.getUnreadCount(session.user.id),
+    ]);
+
+    return NextResponse.json({
+      notifications,
+      unreadCount,
+    });
   } catch (error) {
-    console.error('Failed to fetch notifications:', error);
+    console.error('Error fetching notifications:', error);
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { error: 'Failed to fetch notifications' },
       { status: 500 }
     );
   }

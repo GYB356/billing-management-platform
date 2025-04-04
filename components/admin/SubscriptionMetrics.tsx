@@ -1,16 +1,14 @@
 'use client';
 
+import { useMemo } from 'react';
 import {
-  Chart as ChartJS,
-  ArcElement,
+  PieChart,
+  Pie,
+  Cell,
+  ResponsiveContainer,
   Tooltip,
   Legend,
-  ChartData,
-  ChartOptions,
-} from 'chart.js';
-import { Pie } from 'react-chartjs-2';
-
-ChartJS.register(ArcElement, Tooltip, Legend);
+} from 'recharts';
 
 interface SubscriptionMetricsProps {
   metrics: {
@@ -22,79 +20,38 @@ interface SubscriptionMetricsProps {
   };
 }
 
-export default function SubscriptionMetrics({ metrics }: SubscriptionMetricsProps) {
-  const data: ChartData<'pie'> = {
-    labels: Object.keys(metrics.byPlan),
-    datasets: [
-      {
-        data: Object.values(metrics.byPlan),
-        backgroundColor: [
-          'rgba(59, 130, 246, 0.5)',
-          'rgba(16, 185, 129, 0.5)',
-          'rgba(245, 158, 11, 0.5)',
-          'rgba(239, 68, 68, 0.5)',
-        ],
-        borderColor: [
-          'rgb(59, 130, 246)',
-          'rgb(16, 185, 129)',
-          'rgb(245, 158, 11)',
-          'rgb(239, 68, 68)',
-        ],
-        borderWidth: 1,
-      },
-    ],
-  };
+const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042'];
 
-  const options: ChartOptions<'pie'> = {
-    responsive: true,
-    plugins: {
-      legend: {
-        position: 'right' as const,
-      },
-    },
-  };
+export default function SubscriptionMetrics({ metrics }: SubscriptionMetricsProps) {
+  const data = useMemo(() => {
+    return Object.entries(metrics.byPlan).map(([name, value]) => ({
+      name,
+      value,
+    }));
+  }, [metrics.byPlan]);
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-      <div className="h-[300px]">
-        <Pie data={data} options={options} />
-      </div>
-      
-      <div className="space-y-4">
-        <div className="bg-gray-50 p-4 rounded-lg">
-          <h4 className="text-sm font-medium text-gray-500">Subscription Status</h4>
-          <dl className="mt-2 space-y-2">
-            <div className="flex justify-between">
-              <dt className="text-sm text-gray-600">Active</dt>
-              <dd className="text-sm font-medium text-gray-900">{metrics.active}</dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-sm text-gray-600">Trialing</dt>
-              <dd className="text-sm font-medium text-gray-900">{metrics.trialing}</dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-sm text-gray-600">Canceled</dt>
-              <dd className="text-sm font-medium text-gray-900">{metrics.canceled}</dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-sm text-gray-600">Total</dt>
-              <dd className="text-sm font-medium text-gray-900">{metrics.total}</dd>
-            </div>
-          </dl>
-        </div>
-
-        <div className="bg-gray-50 p-4 rounded-lg">
-          <h4 className="text-sm font-medium text-gray-500">Plan Distribution</h4>
-          <dl className="mt-2 space-y-2">
-            {Object.entries(metrics.byPlan).map(([plan, count]) => (
-              <div key={plan} className="flex justify-between">
-                <dt className="text-sm text-gray-600">{plan}</dt>
-                <dd className="text-sm font-medium text-gray-900">{count}</dd>
-              </div>
+    <div className="h-[300px]">
+      <ResponsiveContainer width="100%" height="100%">
+        <PieChart>
+          <Pie
+            data={data}
+            cx="50%"
+            cy="50%"
+            labelLine={false}
+            label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+            outerRadius={80}
+            fill="#8884d8"
+            dataKey="value"
+          >
+            {data.map((entry, index) => (
+              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
             ))}
-          </dl>
-        </div>
-      </div>
+          </Pie>
+          <Tooltip />
+          <Legend />
+        </PieChart>
+      </ResponsiveContainer>
     </div>
   );
 } 

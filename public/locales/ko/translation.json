@@ -1,0 +1,51 @@
+{
+  "formats": {
+    "title": "형식 설정",
+    "description": "날짜, 숫자 및 통화 표시 방식 사용자 지정",
+    "date": {
+      "label": "날짜 형식",
+      "short": "짧은 형식 (DD/MM/YYYY)",
+      "long": "긴 형식 (YYYY년 MM월 DD일)",
+      "numeric": "숫자 형식 (YYYY-MM-DD)"
+    },
+    "number": {
+      "label": "숫자 형식",
+      "standard": "표준 (1,234.56)",
+      "compact": "간단 (1.2K)",
+      "scientific": "과학적 표기 (1.23e+3)"
+    },
+    "currency": {
+      "label": "통화 형식",
+      "symbol": "기호 (₩1,234.56)",
+      "code": "코드 (KRW 1,234.56)",
+      "name": "이름 (1,234.56 원)"
+    },
+    "save": "설정 저장",
+    "saveSuccess": "형식 설정이 저장되었습니다"
+  },
+  "settings": {
+    "formats": {
+      "title": "형식 설정",
+      "description": "정보 표시 방식 사용자 지정"
+    }
+  },
+  "errors": {
+    "fetchPreferences": "형식 설정을 불러오는데 실패했습니다",
+    "savePreferences": "형식 설정 저장에 실패했습니다"
+  },
+  "invoice": {
+    "title": "청구서 번호 {{number}}",
+    "status": {
+      "paid": "지불됨",
+      "pending": "대기 중",
+      "overdue": "연체"
+    },
+    "issueDate": "발행일",
+    "dueDate": "만료일",
+    "items": "항목",
+    "quantity": "수량: {{count}}",
+    "subtotal": "소계",
+    "tax": "세금",
+    "total": "총액"
+  }
+} 

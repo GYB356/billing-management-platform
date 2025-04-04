@@ -1,30 +1,33 @@
-import { redirect } from 'next/navigation';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
-import AdminSidebar from '@/components/admin/Sidebar';
-import AdminHeader from '@/components/admin/Header';
+import { Toaster } from 'sonner';
+import { I18nProvider } from '@/components/i18n/I18nProvider';
+import { RTLProvider } from '@/components/i18n/RTLProvider';
+import { RTLStyles } from '@/components/i18n/RTLStyles';
+import { Inter } from 'next/font/google';
+import './globals.css';
 
-export default async function AdminLayout({
+const inter = Inter({ subsets: ['latin'] });
+
+export const metadata = {
+  title: 'Billing Management Platform',
+  description: 'A comprehensive platform for managing subscriptions and billing',
+};
+
+export default function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const session = await getServerSession(authOptions);
-
-  // Redirect if not authenticated or not an admin
-  if (!session?.user?.isAdmin) {
-    redirect('/');
-  }
-
   return (
-    <div className="min-h-screen bg-gray-50">
-      <AdminHeader />
-      <div className="flex">
-        <AdminSidebar />
-        <main className="flex-1 p-6">
-          {children}
-        </main>
-      </div>
-    </div>
+    <html lang="en">
+      <body className={inter.className}>
+        <I18nProvider>
+          <RTLProvider>
+            <RTLStyles />
+            <Toaster />
+            {children}
+          </RTLProvider>
+        </I18nProvider>
+      </body>
+    </html>
   );
-} 
+}

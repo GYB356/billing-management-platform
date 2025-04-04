@@ -60,12 +60,16 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Missing organization ID' }, { status: 400 });
     }
     
-    const subscription = await subscriptionService.getSubscription(organizationId);
+    const subscription = await subscriptionService.getSubscriptionWithDetails(organizationId);
     if (!subscription) {
       return NextResponse.json({ error: 'Subscription not found' }, { status: 404 });
     }
-    
-    return NextResponse.json({ subscription });
+
+    return NextResponse.json({
+      subscription,
+      invoices: subscription.invoices,
+      usageRecords: subscription.usageRecords,
+    });
   } catch (error: any) {
     return NextResponse.json({ error: error.message || 'Failed to fetch subscription' }, { status: 500 });
   }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { format } from 'date-fns';
@@ -38,6 +38,22 @@ interface Subscription {
   };
 }
 
+interface Invoice {
+  id: string;
+  amountDue: number;
+  currency: string;
+  status: string;
+  invoiceDate: string;
+  dueDate?: string;
+}
+
+interface UsageRecord {
+  id: string;
+  featureId: number;
+  quantity: number;
+  recordedAt: string;
+}
+
 interface SubscriptionManagementPanelProps {
   subscription: Subscription;
   availablePlans?: any[]; // for upgrading/downgrading
@@ -56,6 +72,37 @@ export default function SubscriptionManagementPanel({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [usageRecords, setUsageRecords] = useState<UsageRecord[]>([]);
+
+  useEffect(() => {
+    async function fetchInvoices() {
+      try {
+        const response = await fetch(`/api/invoices?subscriptionId=${subscription.id}`);
+        const data = await response.json();
+        if (response.ok) {
+          setInvoices(data.invoices);
+        }
+      } catch (error) {
+        console.error('Failed to fetch invoices:', error);
+      }
+    }
+
+    async function fetchUsageRecords() {
+      try {
+        const response = await fetch(`/api/usage?subscriptionId=${subscription.id}`);
+        const data = await response.json();
+        if (response.ok) {
+          setUsageRecords(data.usageRecords);
+        }
+      } catch (error) {
+        console.error('Failed to fetch usage records:', error);
+      }
+    }
+
+    fetchInvoices();
+    fetchUsageRecords();
+  }, [subscription.id]);
 
   // Format dates
   const formatDate = (dateString: string) => {
@@ -250,6 +297,37 @@ export default function SubscriptionManagementPanel({
             </div>
           </div>
         )}
+
+        {/* Invoices Section */}
+        <div className="mb-6">
+          <h3 className="text-sm font-medium text-gray-500">Invoices</h3>
+          <ul className="mt-2 space-y-2">
+            {invoices.map((invoice) => (
+              <li key={invoice.id} className="text-sm text-gray-600">
+                <span>{new Date(invoice.invoiceDate).toLocaleDateString()} - </span>
+                <span>{invoice.status} - </span>
+                <span>{new Intl.NumberFormat('en-US', {
+                  style: 'currency',
+                  currency: invoice.currency,
+                }).format(invoice.amountDue / 100)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        {/* Usage Records Section */}
+        <div className="mb-6">
+          <h3 className="text-sm font-medium text-gray-500">Usage Records</h3>
+          <ul className="mt-2 space-y-2">
+            {usageRecords.map((record) => (
+              <li key={record.id} className="text-sm text-gray-600">
+                <span>Feature {record.featureId}: </span>
+                <span>{record.quantity} units on </span>
+                <span>{new Date(record.recordedAt).toLocaleDateString()}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
         
         {/* Messages */}
         {error && (

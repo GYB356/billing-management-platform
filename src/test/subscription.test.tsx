@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import PricingPage from '@/app/pricing/page';
@@ -19,6 +19,20 @@ jest.mock('@stripe/stripe-js', () => ({
   loadStripe: jest.fn(),
 }));
 
+jest.mock('next/router', () => require('next-router-mock'));
+
+jest.mock('@/app/api/pricing/plans/route', () => ({
+  default: jest.fn(() => Promise.resolve({
+    json: () => Promise.resolve({
+      plans: [
+        { id: '1', name: 'Basic Plan', description: 'Basic features', price: 1000, interval: 'month' },
+        { id: '2', name: 'Pro Plan', description: 'Pro features', price: 2000, interval: 'month' },
+        { id: '3', name: 'Enterprise Plan', description: 'Enterprise features', price: 5000, interval: 'month' },
+      ],
+    }),
+  })),
+}));
+
 describe('Subscription', () => {
   const mockRouter = {
     push: jest.fn(),
@@ -30,16 +44,44 @@ describe('Subscription', () => {
       data: { user: { id: '1' } },
       status: 'authenticated',
     });
+
+    global.fetch = jest.fn().mockImplementation((url) => {
+      if (url === '/api/pricing/plans') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            plans: [
+              { id: '1', name: 'Basic Plan', description: 'Basic features', price: 1000, interval: 'month' },
+              { id: '2', name: 'Pro Plan', description: 'Pro features', price: 2000, interval: 'month' },
+              { id: '3', name: 'Enterprise Plan', description: 'Enterprise features', price: 5000, interval: 'month' },
+            ],
+          }),
+        });
+      }
+      return Promise.reject(new Error('Unknown URL'));
+    });
   });
 
   afterEach(() => {
     jest.clearAllMocks();
   });
 
-  it('should display pricing plans', () => {
-    render(<PricingPage />);
+  it('should display pricing plans', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      json: () => Promise.resolve({
+        plans: [
+          { id: '1', name: 'Basic Plan', description: 'Basic features', price: 1000, interval: 'month' },
+          { id: '2', name: 'Pro Plan', description: 'Pro features', price: 2000, interval: 'month' },
+          { id: '3', name: 'Enterprise Plan', description: 'Enterprise features', price: 5000, interval: 'month' },
+        ],
+      }),
+    });
 
-    expect(screen.getByText(/basic plan/i)).toBeInTheDocument();
+    await act(async () => {
+      render(<PricingPage />);
+    });
+
+    expect(screen.getByRole('heading', { name: /basic plan/i })).toBeInTheDocument();
     expect(screen.getByText(/pro plan/i)).toBeInTheDocument();
     expect(screen.getByText(/enterprise plan/i)).toBeInTheDocument();
   });
@@ -54,7 +96,9 @@ describe('Subscription', () => {
       json: () => Promise.resolve(mockResponse),
     });
 
-    render(<PricingPage />);
+    await act(async () => {
+      render(<PricingPage />);
+    });
 
     const subscribeButton = screen.getByRole('button', { name: /subscribe to basic/i });
     fireEvent.click(subscribeButton);
@@ -83,7 +127,9 @@ describe('Subscription', () => {
       json: () => Promise.resolve(mockResponse),
     });
 
-    render(<PricingPage />);
+    await act(async () => {
+      render(<PricingPage />);
+    });
 
     const cancelButton = screen.getByRole('button', { name: /cancel subscription/i });
     fireEvent.click(cancelButton);
@@ -100,7 +146,9 @@ describe('Subscription', () => {
   it('should handle subscription errors', async () => {
     global.fetch = jest.fn().mockRejectedValueOnce(new Error('Subscription failed'));
 
-    render(<PricingPage />);
+    await act(async () => {
+      render(<PricingPage />);
+    });
 
     const subscribeButton = screen.getByRole('button', { name: /subscribe to basic/i });
     fireEvent.click(subscribeButton);
@@ -116,8 +164,10 @@ describe('Subscription', () => {
       status: 'unauthenticated',
     });
 
-    render(<PricingPage />);
+    act(() => {
+      render(<PricingPage />);
+    });
 
     expect(mockRouter.push).toHaveBeenCalledWith('/auth/signin');
   });
-}); 
+});

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { createHandler } from '@/lib/api/handler';
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import {
   generateTwoFactorSecret,
   verifyAndEnable2FA,
@@ -9,6 +9,9 @@ import {
   disable2FA,
 } from '@/lib/auth/2fa';
 import { getToken } from 'next-auth/jwt';
+import speakeasy from 'speakeasy';
+import QRCode from 'qrcode';
+import prisma from '@/lib/prisma';
 
 const verifyTokenSchema = z.object({
   token: z.string().length(6),
@@ -118,4 +121,4 @@ export const DELETE = createHandler(
   {
     method: 'DELETE',
   }
-); 
+);

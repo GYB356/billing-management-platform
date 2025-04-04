@@ -1,5 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+<<<<<<< HEAD
   webpack: (config, { isServer, dev }) => {
     // Add bundle splitting for translations
     config.optimization.splitChunks = {
@@ -67,3 +68,15 @@ const nextConfig = {
 };
 
 module.exports = nextConfig; 
+=======
+  // Ensure SWC is enabled
+  swcMinify: true,
+
+  // Remove any Babel-specific configurations
+  experimental: {
+    babelConfig: false, // Ensure Babel is not being used
+  },
+};
+
+module.exports = nextConfig;
+>>>>>>> 58d4a3da7158e64e5700c51b28776197a8d974c9

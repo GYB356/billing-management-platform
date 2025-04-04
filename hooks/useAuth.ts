@@ -2,27 +2,17 @@ import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { useEffect } from 'react';
 
-export function useAuth(requireAdmin: boolean = false) {
+export function useAuth() {
   const { data: session, status } = useSession();
   const router = useRouter();
 
   useEffect(() => {
-    if (status === 'loading') return;
+    if (status === 'loading') return; // Wait for session to load
 
     if (!session) {
-      router.push('/auth/signin');
-      return;
+      router.push('/auth/signin'); // Redirect to sign-in if not authenticated
     }
+  }, [session, status, router]);
 
-    if (requireAdmin && session.user.role !== 'ADMIN') {
-      router.push('/dashboard');
-    }
-  }, [session, status, requireAdmin, router]);
-
-  return {
-    user: session?.user,
-    isAuthenticated: !!session,
-    isLoading: status === 'loading',
-    isAdmin: session?.user.role === 'ADMIN',
-  };
+  return { session, status };
 }

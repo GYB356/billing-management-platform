@@ -7,8 +7,8 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// User model
 model User {
+<<<<<<< HEAD
   id                  String             @id @default(cuid())
   name                String?
   email               String             @unique
@@ -1037,4 +1037,12 @@ model Locale {
 
   // Relations
   customers       Customer[]
+=======
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  password  String
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+>>>>>>> 58d4a3da7158e64e5700c51b28776197a8d974c9
 }

@@ -1,4 +1,5 @@
-import { authenticator } from 'otplib';
+import speakeasy from "speakeasy";
+import QRCode from "qrcode";
 import { prisma } from '@/lib/prisma';
 import { ApiError } from '@/lib/api/security';
 
@@ -7,8 +8,16 @@ export interface TwoFactorSecret {
   qrCode: string;
 }
 
+export function generate2FASecret(userId: string) {
+  const secret = speakeasy.generateSecret({ name: `BillingPlatform (${userId})` });
+  return secret;
+}
+
+export async function generateQRCode(secret: string) {
+  return QRCode.toDataURL(secret.otpauth_url!);
+}
+
 export async function generateTwoFactorSecret(userId: string): Promise<TwoFactorSecret> {
-  const secret = authenticator.generateSecret();
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: { email: true },
@@ -18,24 +27,22 @@ export async function generateTwoFactorSecret(userId: string): Promise<TwoFactor
     throw new ApiError(404, 'User not found', 'USER_NOT_FOUND');
   }
 
-  const otpauthUrl = authenticator.keyuri(
-    user.email,
-    'BillingPlatform',
-    secret
-  );
+  const secret = generate2FASecret(user.email);
+
+  const qrCode = await generateQRCode(secret.otpauth_url);
 
   // Store the secret temporarily (will be confirmed when user verifies)
   await prisma.user.update({
     where: { id: userId },
     data: {
-      twoFactorTempSecret: secret,
+      twoFactorTempSecret: secret.base32,
       twoFactorEnabled: false,
     },
   });
 
   return {
-    secret,
-    qrCode: otpauthUrl,
+    secret: secret.base32,
+    qrCode,
   };
 }
 
@@ -52,10 +59,7 @@ export async function verifyAndEnable2FA(
     throw new ApiError(400, '2FA setup not initiated', 'INVALID_2FA_SETUP');
   }
 
-  const isValid = authenticator.verify({
-    token,
-    secret: user.twoFactorTempSecret,
-  });
+  const isValid = verify2FAToken(user.twoFactorTempSecret, token);
 
   if (!isValid) {
     throw new ApiError(400, 'Invalid 2FA token', 'INVALID_2FA_TOKEN');
@@ -74,22 +78,11 @@ export async function verifyAndEnable2FA(
   return true;
 }
 
-export async function verify2FAToken(
-  userId: string,
-  token: string
-): Promise<boolean> {
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { twoFactorSecret: true },
-  });
-
-  if (!user?.twoFactorSecret) {
-    throw new ApiError(400, '2FA not enabled', '2FA_NOT_ENABLED');
-  }
-
-  return authenticator.verify({
+export function verify2FAToken(secret: string, token: string) {
+  return speakeasy.totp.verify({
+    secret,
+    encoding: "base32",
     token,
-    secret: user.twoFactorSecret,
   });
 }
 
@@ -158,4 +151,4 @@ export async function disable2FA(userId: string): Promise<void> {
       twoFactorBackupCodes: [],
     },
   });
-} 
+}

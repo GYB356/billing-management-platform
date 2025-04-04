@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 import { prisma } from './prisma';
 import { stripe } from './stripe';
 import { CurrencyService } from './currency';
@@ -280,3 +281,15 @@ export class AnalyticsService {
     };
   }
 } 
+=======
+import { prisma } from '@/lib/prisma';
+
+export async function calculateChurnRate() {
+  const totalSubscriptions = await prisma.subscription.count();
+  const canceledSubscriptions = await prisma.subscription.count({
+    where: { status: 'CANCELED' },
+  });
+
+  return (canceledSubscriptions / totalSubscriptions) * 100;
+}
+>>>>>>> 58d4a3da7158e64e5700c51b28776197a8d974c9

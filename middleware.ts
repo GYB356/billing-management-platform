@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 import { withAuth } from "next-auth/middleware";
 import { NextResponse } from "next/server";
 import { Ratelimit } from "@upstash/ratelimit";
@@ -8,14 +9,15 @@ import { PrismaClient } from '@prisma/client';
 import { hasPermission, Permission } from './lib/auth/rbac';
 
 const prisma = new PrismaClient();
+=======
+import { NextResponse } from 'next/server';
+import { getToken } from 'next-auth/jwt';
+>>>>>>> 58d4a3da7158e64e5700c51b28776197a8d974c9
 
-// Initialize rate limiter
-const ratelimit = new Ratelimit({
-  redis: Redis.fromEnv(),
-  limiter: Ratelimit.slidingWindow(20, "10 s"), // 20 requests per 10 seconds
-  analytics: true,
-});
+export async function middleware(req) {
+  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
 
+<<<<<<< HEAD
 // Define protected routes and required permissions
 const routePermissions: Record<string, Permission> = {
   // Admin routes
@@ -129,10 +131,18 @@ export async function middleware(request: NextRequest) {
     }
   }
 
+=======
+  // Redirect unauthenticated users to the homepage
+  if (!token && req.nextUrl.pathname.startsWith('/admin')) {
+    return NextResponse.redirect(new URL('/', req.url));
+  }
+
+>>>>>>> 58d4a3da7158e64e5700c51b28776197a8d974c9
   return NextResponse.next();
 }
 
 export const config = {
+<<<<<<< HEAD
   matcher: [
     '/admin/:path*',
     '/settings/:path*',
@@ -144,3 +154,7 @@ export const config = {
     '/api/:path*',
   ],
 }; 
+=======
+  matcher: ['/admin/:path*'], // Apply middleware to /admin routes
+};
+>>>>>>> 58d4a3da7158e64e5700c51b28776197a8d974c9

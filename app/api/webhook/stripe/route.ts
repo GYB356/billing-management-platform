@@ -131,6 +131,10 @@ export async function POST(req: NextRequest) {
       case "charge.refunded":
         await handleChargeRefunded(event.data.object as Stripe.Charge);
         break;
+
+      case "charge.dispute.created":
+        await handleChargeDisputeCreated(event.data.object as Stripe.Dispute);
+        break;
         
       default:
         console.log(`Unhandled event type: ${event.type}`);
@@ -1095,6 +1099,59 @@ async function handleChargeRefunded(charge: Stripe.Charge) {
   }
 }
 
+// Handle charge dispute created event
+async function handleChargeDisputeCreated(dispute: Stripe.Dispute) {
+  // Find the transaction related to the disputed charge
+  const transaction = await prisma.transaction.findFirst({
+    where: { stripeId: dispute.charge },
+    include: {
+      invoice: {
+        include: {
+          subscription: {
+            include: {
+              organization: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  if (!transaction) {
+    console.error(`Transaction not found for charge ID: ${dispute.charge}`);
+    return;
+  }
+
+  const organization = transaction.invoice?.subscription?.organization;
+
+  if (organization) {
+    // Log the dispute in the database
+    await prisma.dispute.create({
+      data: {
+        transactionId: transaction.id,
+        stripeDisputeId: dispute.id,
+        amount: dispute.amount,
+        currency: dispute.currency,
+        reason: dispute.reason,
+        status: dispute.status,
+      },
+    });
+
+    // Notify the organization about the dispute
+    await createNotification({
+      organizationId: organization.id,
+      title: "Payment Dispute Created",
+      message: `A payment dispute for ${formatCurrency(dispute.amount, dispute.currency)} has been created.`,
+      type: "WARNING",
+      data: {
+        disputeId: dispute.id,
+        chargeId: dispute.charge,
+      },
+      channels: ["IN_APP", "EMAIL"],
+    });
+  }
+}
+
 // Map Stripe subscription status to Prisma enum
 function mapStripeStatusToPrisma(status: string): string {
   const statusMap: Record<string, string> = {
@@ -1130,4 +1187,4 @@ function formatCurrency(amount: number, currency: string): string {
   });
   
   return formatter.format(amount / 100);
-} 
+}

@@ -1,52 +1,24 @@
-import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
+import prisma from '@/lib/prisma';
 
-export async function GET(request: Request) {
+export async function GET(req: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
-    const page = Number(searchParams.get('page')) || 1;
-    const limit = 10;
-    const skip = (page - 1) * limit;
-    const status = searchParams.get('status');
-    const planId = searchParams.get('plan');
+    const session = await getServerSession(authOptions);
 
-    const where = {
-      ...(status && { status }),
-      ...(planId && { planId }),
-    };
+    if (!session || !session.user || session.user.role !== 'ADMIN') {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+    }
 
-    const [subscriptions, totalCount] = await Promise.all([
-      prisma.subscription.findMany({
-        where,
-        include: {
-          customer: {
-            select: {
-              name: true,
-              email: true,
-            },
-          },
-          plan: {
-            select: {
-              name: true,
-              price: true,
-            },
-          },
-        },
-        orderBy: {
-          currentPeriodStart: 'desc',
-        },
-        skip,
-        take: limit,
-      }),
-      prisma.subscription.count({ where }),
-    ]);
-
-    return NextResponse.json({
-      subscriptions,
-      totalCount,
-      currentPage: page,
-      pageSize: limit,
+    const subscriptions = await prisma.subscription.findMany({
+      include: {
+        user: true,
+        plan: true,
+      },
     });
+
+    return NextResponse.json(subscriptions);
   } catch (error) {
     console.error('Error fetching subscriptions:', error);
     return NextResponse.json(
@@ -54,4 +26,4 @@ export async function GET(request: Request) {
       { status: 500 }
     );
   }
-} 
+}

@@ -113,6 +113,17 @@ export interface AnalyticsDashboardData {
   };
 }
 
+export interface RevenueMetrics {
+  mrr: number;
+  arr: number;
+  growth: {
+    percentage: number;
+    trend: 'up' | 'down' | 'neutral';
+  };
+  netRevenueRetention: number;
+  grossRevenueRetention: number;
+}
+
 export class AnalyticsService {
   private static instance: AnalyticsService;
 
@@ -158,6 +169,129 @@ export class AnalyticsService {
       });
       throw error;
     }
+  }
+
+  public async getRevenueMetrics(
+    organizationId: string,
+    timeFrame: TimeFrame = 'month'
+  ): Promise<RevenueMetrics> {
+    const startDate = this.getStartDateForTimeFrame(timeFrame);
+    const { start: previousStart, end: previousEnd } = this.getPreviousTimeFrame(timeFrame);
+
+    // Get active subscriptions
+    const activeSubscriptions = await prisma.subscription.findMany({
+      where: {
+        organizationId,
+        status: 'ACTIVE',
+        currentPeriodStart: { gte: startDate },
+      },
+      include: {
+        plan: true
+      }
+    });
+
+    // Calculate MRR
+    const mrr = activeSubscriptions.reduce((total, sub) => {
+      const monthlyAmount = sub.plan.billingInterval === 'YEAR' 
+        ? (sub.plan.price / 12)
+        : sub.plan.price;
+      return total + (monthlyAmount * (sub.quantity || 1));
+    }, 0);
+
+    // Calculate ARR
+    const arr = mrr * 12;
+
+    // Calculate growth
+    const previousSubscriptions = await prisma.subscription.findMany({
+      where: {
+        organizationId,
+        status: 'ACTIVE',
+        currentPeriodStart: { 
+          gte: previousStart,
+          lte: previousEnd
+        },
+      },
+      include: {
+        plan: true
+      }
+    });
+
+    const previousMrr = previousSubscriptions.reduce((total, sub) => {
+      const monthlyAmount = sub.plan.billingInterval === 'YEAR'
+        ? (sub.plan.price / 12)
+        : sub.plan.price;
+      return total + (monthlyAmount * (sub.quantity || 1));
+    }, 0);
+
+    const growthPercentage = previousMrr > 0 
+      ? ((mrr - previousMrr) / previousMrr) * 100
+      : 100;
+
+    // Calculate Net Revenue Retention
+    const commonCustomers = await prisma.organization.findMany({
+      where: {
+        id: organizationId,
+        subscriptions: {
+          some: {
+            createdAt: {
+              lte: previousEnd
+            },
+            status: 'ACTIVE'
+          }
+        }
+      },
+      include: {
+        subscriptions: {
+          include: {
+            plan: true
+          }
+        }
+      }
+    });
+
+    const previousRevenue = commonCustomers.reduce((total, org) => {
+      return total + org.subscriptions.reduce((subTotal, sub) => {
+        if (sub.createdAt <= previousEnd) {
+          const monthlyAmount = sub.plan.billingInterval === 'YEAR'
+            ? (sub.plan.price / 12)
+            : sub.plan.price;
+          return subTotal + (monthlyAmount * (sub.quantity || 1));
+        }
+        return subTotal;
+      }, 0);
+    }, 0);
+
+    const currentRevenue = commonCustomers.reduce((total, org) => {
+      return total + org.subscriptions.reduce((subTotal, sub) => {
+        if (sub.status === 'ACTIVE') {
+          const monthlyAmount = sub.plan.billingInterval === 'YEAR'
+            ? (sub.plan.price / 12)
+            : sub.plan.price;
+          return subTotal + (monthlyAmount * (sub.quantity || 1));
+        }
+        return subTotal;
+      }, 0);
+    }, 0);
+
+    const netRevenueRetention = previousRevenue > 0
+      ? (currentRevenue / previousRevenue) * 100
+      : 100;
+
+    // Calculate Gross Revenue Retention (without expansions)
+    const grossRevenueRetention = previousRevenue > 0
+      ? (Math.min(currentRevenue, previousRevenue) / previousRevenue) * 100
+      : 100;
+
+    return {
+      mrr,
+      arr,
+      growth: {
+        percentage: growthPercentage,
+        trend: growthPercentage > 0 ? 'up' : growthPercentage < 0 ? 'down' : 'neutral'
+      },
+      netRevenueRetention,
+      grossRevenueRetention
+    };
   }
 
   private async getRevenueMetrics(

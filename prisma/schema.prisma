@@ -33,6 +33,9 @@ model User {
   usageRecords        UsageRecord[]
   taxRateHistory      TaxRateHistory[]
   events              Event[]
+  communicationPrefs  CommunicationPrefs?
+  invoices            Invoice[]
+  subscriptions       Subscription[]
 
   @@index([email])
   @@map("users")
@@ -1036,4 +1039,22 @@ model Locale {
 
   // Relations
   customers       Customer[]
+}
+
+model CommunicationPrefs {
+  id          String  @id @default(cuid())
+  userId      String  @unique
+  email       Boolean @default(true)
+  sms         Boolean @default(false)
+  inApp       Boolean @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Usage {
+  id            String   @id @default(cuid())
+  subscriptionId String   @unique
+  usageAmount   Float    @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 }

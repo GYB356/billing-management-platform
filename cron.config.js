@@ -1,6 +1,8 @@
 // This file configures cron jobs for the application
 // You can use a service like cron-job.org, Vercel Cron, or a similar service to schedule these jobs
 
+const { processPaymentRecovery } = require('./lib/jobs/payment-recovery');
+
 module.exports = {
   jobs: [
     {
@@ -11,8 +13,43 @@ module.exports = {
       enabled: true,
       description: 'Process usage records and report to Stripe for billing',
     },
-    // Add more cron jobs here as needed
+    {
+      name: 'Payment Recovery Processing',
+      url: `${process.env.NEXT_PUBLIC_APP_URL}/api/payments/retry-processing?key=${process.env.CRON_SECRET_KEY}`,
+      schedule: '*/15 * * * *', // Run every 15 minutes
+      timezone: 'UTC',
+      enabled: true,
+      description: 'Process payment retries and dunning management',
+      options: {
+        timeout: 30 * 60 * 1000, // 30 minutes timeout
+        retries: 3, // Retry up to 3 times on failure
+        backoff: {
+          type: 'exponential',
+          delay: 60000 // Start with 1 minute delay
+        }
+      }
+    },
+    // Process win-back campaign emails every hour
+    {
+      name: 'process-winback-emails',
+      schedule: '0 * * * *',
+      command: async () => {
+        const { EmailService } = require('./lib/services/email-service');
+        const emailService = new EmailService();
+        await emailService.processWinBackEmails();
+      }
+    }
   ],
+
+  // Payment recovery job - runs every hour
+  paymentRecovery: {
+    schedule: '0 * * * *', // Every hour
+    handler: processPaymentRecovery,
+    options: {
+      timeout: 30 * 60 * 1000, // 30 minutes timeout
+      retries: 3 // Retry up to 3 times on failure
+    }
+  }
 };
 
 /**
@@ -36,4 +73,4 @@ module.exports = {
  *    - Enable the job
  * 
  * 3. Make sure to set CRON_SECRET_KEY in your environment variables for security
- */ 
+ */

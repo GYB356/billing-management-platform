@@ -406,4 +406,226 @@ export class SubscriptionService {
       }
     }
   }
+
+  /**
+   * Calculate plan change impact
+   */
+  public async calculatePlanChangeImpact(
+    subscriptionId: string,
+    newPlanId: string,
+    quantity: number = 1
+  ): Promise<{
+    type: 'upgrade' | 'downgrade' | 'crossgrade';
+    proratedAmount: number;
+    effectiveDate: Date;
+    featureChanges: {
+      added: string[];
+      removed: string[];
+      upgraded: { feature: string; oldLimit: number; newLimit: number }[];
+      downgraded: { feature: string; oldLimit: number; newLimit: number }[];
+    };
+  }> {
+    const subscription = await prisma.subscription.findUnique({
+      where: { id: subscriptionId },
+      include: {
+        plan: {
+          include: {
+            features: true
+          }
+        }
+      }
+    });
+
+    if (!subscription) {
+      throw new Error('Subscription not found');
+    }
+
+    const newPlan = await prisma.pricingPlan.findUnique({
+      where: { id: newPlanId },
+      include: {
+        features: true
+      }
+    });
+
+    if (!newPlan) {
+      throw new Error('New plan not found');
+    }
+
+    // Calculate change type
+    const changeType = newPlan.price > subscription.plan.price ? 'upgrade' : 
+                      newPlan.price < subscription.plan.price ? 'downgrade' : 
+                      'crossgrade';
+
+    // Calculate proration if Stripe is configured
+    let proratedAmount = 0;
+    if (subscription.stripeSubscriptionId) {
+      const invoice = await stripe.invoices.retrieveUpcoming({
+        customer: subscription.stripeCustomerId!,
+        subscription: subscription.stripeSubscriptionId,
+        subscription_items: [{
+          id: subscription.stripeSubscriptionItemId!,
+          price: newPlan.stripePriceId!,
+          quantity
+        }]
+      });
+      proratedAmount = invoice.amount_due;
+    }
+
+    // Analyze feature changes
+    const featureChanges = {
+      added: [] as string[],
+      removed: [] as string[],
+      upgraded: [] as { feature: string; oldLimit: number; newLimit: number }[],
+      downgraded: [] as { feature: string; oldLimit: number; newLimit: number }[]
+    };
+
+    // Map features by code for easy comparison
+    const currentFeatures = new Map(subscription.plan.features.map(f => [f.code, f]));
+    const newFeatures = new Map(newPlan.features.map(f => [f.code, f]));
+
+    // Find added and removed features
+    for (const [code, feature] of newFeatures) {
+      if (!currentFeatures.has(code)) {
+        featureChanges.added.push(feature.name);
+      }
+    }
+
+    for (const [code, feature] of currentFeatures) {
+      if (!newFeatures.has(code)) {
+        featureChanges.removed.push(feature.name);
+      }
+    }
+
+    // Compare limits for common features
+    for (const [code, newFeature] of newFeatures) {
+      const currentFeature = currentFeatures.get(code);
+      if (currentFeature && newFeature.limits && currentFeature.limits) {
+        const newLimit = JSON.parse(newFeature.limits).maxUsage;
+        const currentLimit = JSON.parse(currentFeature.limits).maxUsage;
+        
+        if (newLimit > currentLimit) {
+          featureChanges.upgraded.push({
+            feature: newFeature.name,
+            oldLimit: currentLimit,
+            newLimit
+          });
+        } else if (newLimit < currentLimit) {
+          featureChanges.downgraded.push({
+            feature: newFeature.name,
+            oldLimit: currentLimit,
+            newLimit
+          });
+        }
+      }
+    }
+
+    return {
+      type: changeType,
+      proratedAmount,
+      effectiveDate: subscription.currentPeriodEnd,
+      featureChanges
+    };
+  }
+
+  /**
+   * Process subscription cancellation with feedback collection
+   */
+  public async cancelSubscriptionWithFeedback(
+    subscriptionId: string,
+    feedback: {
+      reason: string;
+      additionalFeedback?: string;
+      cancelImmediately?: boolean;
+    }
+  ): Promise<SubscriptionWithDetails> {
+    const subscription = await this.cancelSubscription(
+      subscriptionId,
+      feedback.cancelImmediately || false
+    );
+
+    // Store cancellation feedback
+    await prisma.subscriptionCancellationFeedback.create({
+      data: {
+        subscriptionId,
+        reason: feedback.reason,
+        additionalFeedback: feedback.additionalFeedback,
+        timestamp: new Date()
+      }
+    });
+
+    // Trigger win-back workflow if appropriate
+    if (['too_expensive', 'missing_features'].includes(feedback.reason)) {
+      await this.initiateWinBackCampaign(subscriptionId, feedback.reason);
+    }
+
+    return subscription;
+  }
+
+  /**
+   * Initiate win-back campaign for churned customers
+   */
+  private async initiateWinBackCampaign(
+    subscriptionId: string,
+    cancellationReason: string
+  ): Promise<void> {
+    const subscription = await prisma.subscription.findUnique({
+      where: { id: subscriptionId },
+      include: {
+        organization: true,
+        plan: true
+      }
+    });
+
+    if (!subscription) return;
+
+    // Define win-back offer based on cancellation reason
+    const winBackOffer = cancellationReason === 'too_expensive'
+      ? {
+          type: 'DISCOUNT',
+          details: {
+            percentOff: 20,
+            durationMonths: 3
+          }
+        }
+      : {
+          type: 'TRIAL_EXTENSION',
+          details: {
+            durationDays: 30
+          }
+        };
+
+    // Create win-back campaign record
+    await prisma.winBackCampaign.create({
+      data: {
+        subscriptionId,
+        organizationId: subscription.organizationId,
+        reason: cancellationReason,
+        offer: winBackOffer,
+        status: 'PENDING',
+        validUntil: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 days
+      }
+    });
+
+    // Schedule win-back emails
+    const emailSchedule = [
+      { days: 1, template: 'immediate_win_back' },
+      { days: 7, template: 'seven_day_win_back' },
+      { days: 15, template: 'final_win_back' }
+    ];
+
+    for (const schedule of emailSchedule) {
+      await prisma.scheduledEmail.create({
+        data: {
+          organizationId: subscription.organizationId,
+          template: schedule.template,
+          scheduledFor: new Date(Date.now() + schedule.days * 24 * 60 * 60 * 1000),
+          data: {
+            subscriptionId,
+            planName: subscription.plan.name,
+            offer: winBackOffer
+          }
+        }
+      });
+    }
+  }
 }

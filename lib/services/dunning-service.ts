@@ -1,50 +1,49 @@
 import { prisma } from '@/lib/prisma';
-import { PaymentStatus, DunningStep, DunningAction } from '@prisma/client';
-import { PaymentService } from './payment-service';
-import { createEvent } from '../events';
-import { sendEmail } from '../email';
+import { PaymentRetryService } from './payment-retry-service';
+import { createEvent } from '@/lib/events';
+import { createNotification } from '@/lib/notifications';
+import { NotificationChannel } from '@/lib/types';
+import { formatCurrency } from '@/lib/currency';
 
 interface DunningConfig {
   steps: Array<{
     daysPastDue: number;
-    actions: DunningAction[];
-    retryPayment: boolean;
-    sendEmail: boolean;
-    emailTemplate: string;
-    suspendService: boolean;
+    actions: string[];
+    message?: string;
+    suspendOnFailure?: boolean;
   }>;
-  maxRetries: number;
-  gracePeriodDays: number;
+  maxPaymentAttempts: number;
+  notificationChannels: NotificationChannel[];
 }
 
 export class DunningService {
-  private readonly paymentService: PaymentService;
+  private retryService: PaymentRetryService;
 
   constructor() {
-    this.paymentService = new PaymentService();
+    this.retryService = new PaymentRetryService();
   }
 
   /**
-   * Process dunning for all past due subscriptions
+   * Process dunning for all past due invoices
    */
   public async processDunning() {
-    const pastDueSubscriptions = await prisma.subscription.findMany({
+    const pastDueInvoices = await prisma.invoice.findMany({
       where: {
-        status: 'ACTIVE',
-        invoices: {
-          some: {
-            status: 'PAST_DUE'
+        status: 'PAST_DUE',
+        subscription: {
+          status: {
+            not: 'CANCELLED'
           }
         }
       },
       include: {
-        organization: true,
-        invoices: {
-          where: {
-            status: 'PAST_DUE'
+        subscription: {
+          include: {
+            organization: true,
+            plan: true
           }
         },
-        dunningHistory: {
+        paymentAttempts: {
           orderBy: {
             createdAt: 'desc'
           }
@@ -52,116 +51,113 @@ export class DunningService {
       }
     });
 
-    for (const subscription of pastDueSubscriptions) {
-      await this.processDunningForSubscription(subscription);
+    for (const invoice of pastDueInvoices) {
+      await this.processDunningForInvoice(invoice);
     }
   }
 
   /**
-   * Process dunning for a specific subscription
+   * Process dunning for a specific invoice
    */
-  private async processDunningForSubscription(subscription: any) {
-    const config = await this.getDunningConfig(subscription.organizationId);
-    const pastDueInvoice = subscription.invoices[0];
-    const daysPastDue = this.getDaysPastDue(pastDueInvoice.dueDate);
+  private async processDunningForInvoice(invoice: any) {
+    const config = await this.getDunningConfig(invoice.subscription.organizationId);
+    const daysPastDue = this.getDaysPastDue(invoice.dueDate);
+    
+    // Find the appropriate dunning step
+    const step = config.steps.find(s => s.daysPastDue <= daysPastDue);
+    if (!step) return;
 
-    // Find the appropriate dunning step based on days past due
-    const step = config.steps.find(s => 
-      daysPastDue >= s.daysPastDue && 
-      (!s.nextStep || daysPastDue < s.nextStep.daysPastDue)
-    );
+    // Check if we've already processed this step today
+    const lastDunningLog = await prisma.dunningLog.findFirst({
+      where: {
+        invoiceId: invoice.id,
+        daysPastDue: step.daysPastDue,
+        createdAt: {
+          gte: new Date(new Date().setHours(0, 0, 0, 0))
+        }
+      }
+    });
 
-    if (!step) {
-      return;
-    }
-
-    // Check if this step has already been executed
-    const stepExecuted = subscription.dunningHistory.some(history =>
-      history.daysPastDue === step.daysPastDue &&
-      new Date(history.createdAt).toDateString() === new Date().toDateString()
-    );
-
-    if (stepExecuted) {
-      return;
-    }
+    if (lastDunningLog) return;
 
     // Execute dunning actions
-    await this.executeDunningStep(subscription, pastDueInvoice, step, config);
+    await this.executeDunningStep(invoice, step, config);
   }
 
   /**
    * Execute dunning step actions
    */
   private async executeDunningStep(
-    subscription: any,
     invoice: any,
     step: any,
     config: DunningConfig
   ) {
     const actions: string[] = [];
 
-    // Retry payment if configured
-    if (step.retryPayment) {
-      const retryCount = subscription.dunningHistory.filter(h => h.action === 'PAYMENT_RETRY').length;
-
-      if (retryCount < config.maxRetries) {
-        try {
-          await this.paymentService.retryPayment(invoice.paymentId);
-          actions.push('PAYMENT_RETRY');
-        } catch (error) {
-          console.error('Payment retry failed:', error);
-        }
-      }
-    }
-
-    // Send email notification
-    if (step.sendEmail && subscription.organization.email) {
+    // Schedule payment retry if configured
+    if (step.actions.includes('RETRY_PAYMENT')) {
       try {
-        await sendEmail(
-          subscription.organization.email,
-          step.emailTemplate,
-          {
-            organizationName: subscription.organization.name,
-            invoiceNumber: invoice.number,
-            amount: invoice.totalAmount,
-            currency: invoice.currency,
-            dueDate: invoice.dueDate,
-            daysPastDue: this.getDaysPastDue(invoice.dueDate)
-          }
-        );
-        actions.push('EMAIL_SENT');
+        await this.retryService.scheduleRetry({
+          subscriptionId: invoice.subscription.id,
+          invoiceId: invoice.id,
+          amount: invoice.amount,
+          failureCode: invoice.lastPaymentError || 'unknown',
+          paymentMethodId: invoice.defaultPaymentMethodId
+        });
+        actions.push('PAYMENT_RETRY_SCHEDULED');
       } catch (error) {
-        console.error('Email sending failed:', error);
+        console.error('Error scheduling payment retry:', error);
       }
     }
 
-    // Suspend service if configured
-    if (step.suspendService && !subscription.isSuspended) {
-      await this.suspendService(subscription.id);
-      actions.push('SERVICE_SUSPENDED');
+    // Send notifications
+    if (step.actions.includes('SEND_NOTIFICATION')) {
+      await createNotification({
+        organizationId: invoice.subscription.organizationId,
+        title: 'Payment Past Due',
+        message: step.message || this.getDefaultDunningMessage(invoice, daysPastDue),
+        type: 'WARNING',
+        data: {
+          invoiceId: invoice.id,
+          subscriptionId: invoice.subscription.id,
+          amount: invoice.amount,
+          daysPastDue: this.getDaysPastDue(invoice.dueDate)
+        },
+        channels: config.notificationChannels
+      });
+      actions.push('NOTIFICATION_SENT');
     }
 
-    // Record dunning history
-    await prisma.dunningHistory.create({
+    // Suspend subscription if configured
+    if (step.suspendOnFailure && !invoice.subscription.isSuspended) {
+      await this.suspendSubscription(invoice.subscription.id);
+      actions.push('SUBSCRIPTION_SUSPENDED');
+    }
+
+    // Create dunning log
+    await prisma.dunningLog.create({
       data: {
-        subscriptionId: subscription.id,
         invoiceId: invoice.id,
+        subscriptionId: invoice.subscription.id,
+        customerId: invoice.subscription.organization.id,
         daysPastDue: this.getDaysPastDue(invoice.dueDate),
         actions,
+        status: 'COMPLETED',
         metadata: {
           step: step.daysPastDue,
-          retryCount: subscription.dunningHistory.filter(h => h.action === 'PAYMENT_RETRY').length + 1
+          amount: invoice.amount,
+          currency: invoice.currency
         }
       }
     });
 
     // Create event
     await createEvent({
-      type: 'DUNNING_STEP_EXECUTED',
-      resourceType: 'SUBSCRIPTION',
-      resourceId: subscription.id,
+      organizationId: invoice.subscription.organizationId,
+      eventType: 'DUNNING_STEP_EXECUTED',
+      resourceType: 'INVOICE',
+      resourceId: invoice.id,
       metadata: {
-        invoiceId: invoice.id,
         daysPastDue: this.getDaysPastDue(invoice.dueDate),
         actions,
         step: step.daysPastDue
@@ -170,57 +166,17 @@ export class DunningService {
   }
 
   /**
-   * Suspend service for a subscription
-   */
-  private async suspendService(subscriptionId: string) {
-    await prisma.subscription.update({
-      where: { id: subscriptionId },
-      data: {
-        isSuspended: true,
-        suspendedAt: new Date()
-      }
-    });
-
-    // Create event
-    await createEvent({
-      type: 'SERVICE_SUSPENDED',
-      resourceType: 'SUBSCRIPTION',
-      resourceId: subscriptionId,
-      severity: 'HIGH'
-    });
-  }
-
-  /**
-   * Resume service for a subscription
-   */
-  public async resumeService(subscriptionId: string) {
-    await prisma.subscription.update({
-      where: { id: subscriptionId },
-      data: {
-        isSuspended: false,
-        suspendedAt: null
-      }
-    });
-
-    // Create event
-    await createEvent({
-      type: 'SERVICE_RESUMED',
-      resourceType: 'SUBSCRIPTION',
-      resourceId: subscriptionId
-    });
-  }
-
-  /**
    * Get dunning configuration for an organization
    */
   private async getDunningConfig(organizationId: string): Promise<DunningConfig> {
-    const orgConfig = await prisma.organizationConfig.findUnique({
-      where: { organizationId },
-      select: { dunningConfig: true }
+    const config = await prisma.dunningConfig.findFirst({
+      where: {
+        organizationId,
+        isActive: true
+      }
     });
 
-    // Return organization-specific config if it exists, otherwise return default config
-    return orgConfig?.dunningConfig || this.getDefaultDunningConfig();
+    return config || this.getDefaultDunningConfig();
   }
 
   /**
@@ -231,39 +187,28 @@ export class DunningService {
       steps: [
         {
           daysPastDue: 1,
-          actions: ['EMAIL'],
-          retryPayment: true,
-          sendEmail: true,
-          emailTemplate: 'payment-failed-first-attempt',
-          suspendService: false
+          actions: ['SEND_NOTIFICATION', 'RETRY_PAYMENT'],
+          message: 'Your payment is past due. We will automatically retry the payment.'
         },
         {
           daysPastDue: 3,
-          actions: ['EMAIL', 'PAYMENT_RETRY'],
-          retryPayment: true,
-          sendEmail: true,
-          emailTemplate: 'payment-failed-second-attempt',
-          suspendService: false
+          actions: ['SEND_NOTIFICATION', 'RETRY_PAYMENT'],
+          message: 'Your payment is 3 days past due. Please update your payment method.'
         },
         {
           daysPastDue: 7,
-          actions: ['EMAIL', 'PAYMENT_RETRY'],
-          retryPayment: true,
-          sendEmail: true,
-          emailTemplate: 'payment-failed-final-warning',
-          suspendService: false
+          actions: ['SEND_NOTIFICATION', 'RETRY_PAYMENT'],
+          message: 'Final notice: Your payment is 7 days past due. Service may be suspended.'
         },
         {
           daysPastDue: 14,
-          actions: ['EMAIL', 'SUSPEND'],
-          retryPayment: false,
-          sendEmail: true,
-          emailTemplate: 'service-suspended',
-          suspendService: true
+          actions: ['SEND_NOTIFICATION'],
+          message: 'Your service has been suspended due to non-payment.',
+          suspendOnFailure: true
         }
       ],
-      maxRetries: 3,
-      gracePeriodDays: 14
+      maxPaymentAttempts: 4,
+      notificationChannels: [NotificationChannel.EMAIL, NotificationChannel.IN_APP]
     };
   }
 
@@ -278,44 +223,35 @@ export class DunningService {
   }
 
   /**
-   * Get dunning status for a subscription
+   * Get default dunning message
    */
-  public async getDunningStatus(subscriptionId: string) {
-    const subscription = await prisma.subscription.findUnique({
+  private getDefaultDunningMessage(invoice: any, daysPastDue: number): string {
+    return `Your payment of ${formatCurrency(invoice.amount, invoice.currency)} for ${invoice.subscription.plan.name} is ${daysPastDue} days past due. Please update your payment method to avoid service interruption.`;
+  }
+
+  /**
+   * Suspend subscription
+   */
+  private async suspendSubscription(subscriptionId: string) {
+    await prisma.subscription.update({
       where: { id: subscriptionId },
-      include: {
-        invoices: {
-          where: {
-            status: 'PAST_DUE'
-          }
-        },
-        dunningHistory: {
-          orderBy: {
-            createdAt: 'desc'
-          }
-        }
+      data: {
+        isSuspended: true,
+        suspendedAt: new Date()
       }
     });
+  }
 
-    if (!subscription) {
-      throw new Error('Subscription not found');
-    }
-
-    const pastDueInvoice = subscription.invoices[0];
-    if (!pastDueInvoice) {
-      return {
-        status: 'CURRENT',
-        daysPastDue: 0,
-        lastAction: null,
-        actionHistory: []
-      };
-    }
-
-    return {
-      status: subscription.isSuspended ? 'SUSPENDED' : 'PAST_DUE',
-      daysPastDue: this.getDaysPastDue(pastDueInvoice.dueDate),
-      lastAction: subscription.dunningHistory[0] || null,
-      actionHistory: subscription.dunningHistory
-    };
+  /**
+   * Resume subscription
+   */
+  public async resumeSubscription(subscriptionId: string) {
+    await prisma.subscription.update({
+      where: { id: subscriptionId },
+      data: {
+        isSuspended: false,
+        suspendedAt: null
+      }
+    });
   }
 }

@@ -4,10 +4,9 @@ import { authOptions } from '@/lib/auth';
 import { SubscriptionService } from '@/lib/services/subscription-service';
 import { z } from 'zod';
 
-const cancelSubscriptionSchema = z.object({
-  cancelImmediately: z.boolean().optional().default(false),
-  reason: z.string(),
-  additionalFeedback: z.string().optional()
+const impactAnalysisSchema = z.object({
+  newPlanId: z.string(),
+  quantity: z.number().optional()
 });
 
 export async function POST(
@@ -26,7 +25,7 @@ export async function POST(
 
     // Parse request body
     const body = await req.json();
-    const validationResult = cancelSubscriptionSchema.safeParse(body);
+    const validationResult = impactAnalysisSchema.safeParse(body);
     
     if (!validationResult.success) {
       return NextResponse.json(
@@ -38,31 +37,23 @@ export async function POST(
       );
     }
 
-    const { cancelImmediately, reason, additionalFeedback } = validationResult.data;
+    const { newPlanId, quantity } = validationResult.data;
 
     // Initialize subscription service
     const subscriptionService = new SubscriptionService();
 
-    // Cancel subscription with feedback
-    const result = await subscriptionService.cancelSubscriptionWithFeedback(
+    // Get impact analysis
+    const impact = await subscriptionService.calculatePlanChangeImpact(
       params.id,
-      {
-        reason,
-        additionalFeedback,
-        cancelImmediately
-      }
+      newPlanId,
+      quantity
     );
 
-    return NextResponse.json({
-      message: cancelImmediately 
-        ? 'Subscription canceled successfully' 
-        : 'Subscription will be canceled at the end of the billing period',
-      subscription: result
-    });
+    return NextResponse.json(impact);
   } catch (error: any) {
-    console.error('Error canceling subscription:', error);
+    console.error('Error calculating plan change impact:', error);
     return NextResponse.json(
-      { error: error.message || 'Failed to cancel subscription' },
+      { error: error.message || 'Failed to calculate plan change impact' },
       { status: 500 }
     );
   }

@@ -348,6 +348,8 @@ model Customer {
   currency          Currency?   @relation(fields: [preferredCurrency], references: [code])
   preferredLocale   String?
   locale            Locale?     @relation(fields: [preferredLocale], references: [code])
+  creditBalance     Int         @default(0)
+  creditAdjustments CreditAdjustment[]
 
   @@unique([organizationId, email])
   @@map("customers")
@@ -382,6 +384,10 @@ model Subscription {
   coupon               Coupon?            @relation(fields: [couponId], references: [id])
   currency             String             @default("USD")
   currencyRelation     Currency?          @relation(fields: [currency], references: [code])
+  isSuspended          Boolean            @default(false)
+  suspendedAt          DateTime?
+  paymentAttempts      PaymentAttempt[]
+  dunningLogs          DunningLog[]
 
   // Relations
   organization         Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -444,6 +450,7 @@ model Invoice {
   currency       String       @default("USD")
   currencyRelation Currency?  @relation(fields: [currency], references: [code])
   exchangeRate   Float?       // Exchange rate at the time of invoice creation
+  lastPaymentError String?
 
   @@unique([organizationId, number])
   @@map("invoices")
@@ -931,35 +938,63 @@ model UsageLimit {
 
 // Dunning configuration
 model DunningConfig {
-  id          String    @id @default(uuid())
-  name        String
-  description String?
-  isActive    Boolean   @default(false)
-  stepsJson   String    @db.Text  // JSON string of dunning steps
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id              String   @id @default(uuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id])
+  name            String
+  description     String?
+  isActive        Boolean  @default(false)
+  stepsJson       String   @db.Text  // JSON array of dunning steps
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([organizationId, isActive]) where isActive = true
+  @@index([organizationId])
 }
 
 // Dunning logs
 model DunningLog {
-  id            String      @id @default(uuid())
-  customerId    String
-  customer      Customer    @relation(fields: [customerId], references: [id])
+  id             String       @id @default(uuid())
   subscriptionId String
-  subscription  Subscription @relation(fields: [subscriptionId], references: [id])
-  invoiceId     String?
-  invoice       Invoice?    @relation(fields: [invoiceId], references: [id])
-  stepNumber    Int
-  action        String
-  status        String      // 'pending', 'success', 'failed'
-  notes         String?
-  metadataJson  String?     @db.Text
-  createdAt     DateTime    @default(now())
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id])
+  invoiceId      String?
+  invoice        Invoice?     @relation(fields: [invoiceId], references: [id])
+  customerId     String
+  customer       Customer     @relation(fields: [customerId], references: [id])
+  daysPastDue    Int
+  actions        String[]     // Array of actions taken: 'NOTIFICATION_SENT', 'PAYMENT_RETRY', etc.
+  status         String       // 'COMPLETED', 'FAILED'
+  metadata       Json?        @default("{}")
+  createdAt      DateTime     @default(now())
 
-  @@index([customerId])
   @@index([subscriptionId])
   @@index([invoiceId])
+  @@index([customerId])
   @@index([createdAt])
+}
+
+// Payment attempts for dunning
+model PaymentAttempt {
+  id               String       @id @default(uuid())
+  subscriptionId   String
+  subscription     Subscription @relation(fields: [subscriptionId], references: [id])
+  invoiceId        String?
+  invoice          Invoice?     @relation(fields: [invoiceId], references: [id])
+  amount           Float
+  currency         String       @default("USD")
+  status           String       // 'SCHEDULED', 'PROCESSING', 'SUCCEEDED', 'FAILED', 'CANCELLED'
+  failureCode      String?
+  failureMessage   String?
+  scheduledFor     DateTime?
+  processedAt      DateTime?
+  metadata         Json?        @default("{}")
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@index([subscriptionId])
+  @@index([invoiceId])
+  @@index([status])
+  @@index([scheduledFor])
 }
 
 // Payment attempts for dunning
@@ -970,7 +1005,7 @@ model PaymentAttempt {
   invoiceId        String?
   invoice          Invoice?    @relation(fields: [invoiceId], references: [id])
   amount           Float
-  currency         String
+  currency         String      @default("USD")
   status           String      // 'pending', 'succeeded', 'failed'
   failureCode      String?
   failureMessage   String?
@@ -1056,4 +1091,108 @@ model Usage {
   usageAmount   Float    @default(0)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+}
+
+enum CreditAdjustmentType {
+  CREDIT
+  DEBIT
+  REFUND
+  INVOICE_PAYMENT
+}
+
+model CreditNote {
+  id            String      @id @default(cuid())
+  number        String      @unique
+  invoiceId     String      
+  invoice       Invoice     @relation(fields: [invoiceId], references: [id])
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  amount        Int
+  taxAmount     Int         @default(0)
+  totalAmount   Int
+  currency      String      @default("USD")
+  status        String      @default("ISSUED")
+  notes         String?
+  issuedAt      DateTime    @default(now())
+  refundedAt    DateTime?
+  metadata      Json?       @default("{}")
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@index([organizationId])
+  @@index([invoiceId])
+}
+
+model CreditAdjustment {
+  id            String      @id @default(cuid())
+  customerId    String
+  customer      Customer    @relation(fields: [customerId], references: [id])
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  amount        Int
+  type          CreditAdjustmentType
+  description   String
+  reason        String?
+  invoiceId     String?
+  invoice       Invoice?    @relation(fields: [invoiceId], references: [id])
+  adjustedById  String
+  adjustedBy    User        @relation(fields: [adjustedById], references: [id])
+  metadata      Json?       @default("{}")
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@index([customerId])
+  @@index([organizationId])
+  @@index([invoiceId])
+}
+
+model SubscriptionCancellationFeedback {
+  id                 String       @id @default(cuid())
+  subscriptionId     String
+  subscription      Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  reason            String
+  additionalFeedback String?
+  timestamp         DateTime     @default(now())
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  @@index([subscriptionId])
+  @@map("subscription_cancellation_feedback")
+}
+
+model WinBackCampaign {
+  id              String       @id @default(cuid())
+  subscriptionId  String
+  subscription    Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  reason          String
+  offer          Json
+  status         String       @default("PENDING") // PENDING, ACCEPTED, REJECTED, EXPIRED
+  validUntil     DateTime
+  acceptedAt     DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([subscriptionId])
+  @@index([organizationId])
+  @@map("win_back_campaigns")
+}
+
+model ScheduledEmail {
+  id              String       @id @default(cuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  template        String
+  scheduledFor    DateTime
+  data           Json
+  sent           Boolean      @default(false)
+  sentAt         DateTime?
+  error          String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId])
+  @@index([scheduledFor])
+  @@map("scheduled_emails")
 }

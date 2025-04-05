@@ -32,6 +32,7 @@ export interface WebhookDelivery {
   response?: string;
   errorMessage?: string;
   attempts: number;
+  lastAttemptAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -443,21 +444,37 @@ export class WebhookService {
 
       return success;
     } catch (error) {
-      // Update delivery record with error
-      await prisma.webhookDelivery.update({
-        where: { id: delivery.id },
-        data: {
-          status: 'FAILED',
-          errorMessage: error instanceof Error ? error.message : 'Unknown error',
-          attempts: delivery.attempts + 1,
-          updatedAt: new Date(),
-        },
-      });
+      await this.handleRetryError(delivery, error, delivery.attempts + 1);
+      return false;
+    }
+  }
 
-      // Log retry error
+  /**
+   * Handle webhook delivery retry error
+   * @private
+   */
+  private static async handleRetryError(
+    delivery: any,
+    error: any,
+    attempt: number
+  ): Promise<void> {
+    // Update delivery record with error
+    await prisma.webhookDelivery.update({
+      where: { id: delivery.id },
+      data: {
+        status: 'FAILED',
+        errorMessage: error instanceof Error ? error.message : 'Unknown error',
+        attempts: attempt,
+        lastAttemptAt: new Date()
+      }
+    });
+
+    // Check if max retry attempts reached
+    if (attempt >= 5) {
+      // Log max retries reached
       await createEvent({
         organizationId: delivery.webhookEndpoint.organizationId,
-        eventType: 'WEBHOOK_RETRY_ERROR',
+        eventType: 'WEBHOOK_MAX_RETRIES_REACHED',
         resourceType: 'WEBHOOK_DELIVERY',
         resourceId: delivery.id,
         severity: EventSeverity.ERROR,
@@ -465,12 +482,33 @@ export class WebhookService {
           webhookEndpointId: delivery.webhookEndpoint.id,
           event: delivery.event,
           url: delivery.webhookEndpoint.url,
-          error: error instanceof Error ? error.message : 'Unknown error',
-          attempt: delivery.attempts + 1,
-        },
+          attempts: attempt,
+          finalError: error instanceof Error ? error.message : 'Unknown error'
+        }
       });
 
-      return false;
+      // Optionally disable endpoint if needed
+      if (delivery.webhookEndpoint.disableOnMaxRetries) {
+        await prisma.webhookEndpoint.update({
+          where: { id: delivery.webhookEndpoint.id },
+          data: {
+            isActive: false,
+            disabledReason: 'Maximum retry attempts reached'
+          }
+        });
+
+        await createEvent({
+          organizationId: delivery.webhookEndpoint.organizationId,
+          eventType: 'WEBHOOK_ENDPOINT_DISABLED',
+          resourceType: 'WEBHOOK_ENDPOINT',
+          resourceId: delivery.webhookEndpoint.id,
+          severity: EventSeverity.WARNING,
+          metadata: {
+            reason: 'Maximum retry attempts reached',
+            failedDeliveryId: delivery.id
+          }
+        });
+      }
     }
   }
 
@@ -569,4 +607,4 @@ export class WebhookService {
       return false;
     }
   }
-} 
+}

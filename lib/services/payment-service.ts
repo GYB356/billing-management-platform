@@ -1,5 +1,5 @@
 import { stripe } from '@/lib/stripe';
-import prisma from '@/lib/prisma';
+import { prisma } from '@/lib/prisma';
 import { PaymentStatus } from '@prisma/client';
 import { createEvent } from '../events';
 
@@ -8,138 +8,141 @@ export interface PaymentParams {
   amount: number;
   currency: string;
   paymentMethodId?: string;
-  customerId: string;
+  customerId?: string;
   description?: string;
   metadata?: Record<string, any>;
 }
 
-export async function processPayment(params: PaymentParams) {
-  const {
-    invoiceId,
-    amount,
-    currency,
-    paymentMethodId,
-    customerId,
-    description,
-    metadata
-  } = params;
+export interface RefundParams {
+  paymentId: string;
+  amount?: number;
+  reason?: string;
+  metadata?: Record<string, any>;
+}
 
-  try {
-    // Get the invoice
-    const invoice = await prisma.invoice.findUnique({
-      where: { id: invoiceId },
-      include: {
-        customer: true,
-        organization: true
+export class PaymentService {
+  /**
+   * Process a payment
+   */
+  public async processPayment(params: PaymentParams) {
+    const {
+      invoiceId,
+      amount,
+      currency,
+      paymentMethodId,
+      customerId,
+      description,
+      metadata = {}
+    } = params;
+
+    try {
+      // Get the invoice
+      const invoice = await prisma.invoice.findUnique({
+        where: { id: invoiceId },
+        include: {
+          organization: true
+        }
+      });
+
+      if (!invoice) {
+        throw new Error('Invoice not found');
       }
-    });
 
-    if (!invoice) {
-      throw new Error('Invoice not found');
-    }
+      if (invoice.status === 'PAID') {
+        throw new Error('Invoice is already paid');
+      }
 
-    if (invoice.status === 'PAID') {
-      throw new Error('Invoice is already paid');
-    }
+      const organization = invoice.organization;
 
-    // Get customer and organization
-    const customer = invoice.customer;
-    const organization = invoice.organization;
+      // Create payment intent in Stripe
+      let stripePaymentIntentId = null;
+      if (organization.stripeCustomerId && paymentMethodId) {
+        const paymentIntent = await stripe.paymentIntents.create({
+          amount,
+          currency,
+          customer: organization.stripeCustomerId,
+          payment_method: paymentMethodId,
+          off_session: true,
+          confirm: true,
+          description: description || `Payment for invoice ${invoice.number}`,
+          metadata: {
+            invoiceId,
+            organizationId: organization.id,
+            ...metadata
+          }
+        });
 
-    if (!customer) {
-      throw new Error('Customer not found');
-    }
+        stripePaymentIntentId = paymentIntent.id;
+      }
 
-    let stripePaymentIntentId = null;
-
-    // Create a payment intent if Stripe is enabled
-    if (paymentMethodId && customer.stripeCustomerId) {
-      const paymentIntent = await stripe.paymentIntents.create({
-        amount,
-        currency,
-        customer: customer.stripeCustomerId,
-        payment_method: paymentMethodId,
-        off_session: true,
-        confirm: true,
-        description: description || `Payment for invoice ${invoice.number}`,
-        metadata: {
+      // Create payment record
+      const payment = await prisma.payment.create({
+        data: {
           invoiceId,
           organizationId: organization.id,
-          ...metadata
+          amount,
+          currency,
+          status: stripePaymentIntentId ? PaymentStatus.COMPLETED : PaymentStatus.PENDING,
+          stripePaymentIntentId,
+          paymentMethodId,
+          description: description || `Payment for invoice ${invoice.number}`,
+          metadata
         }
       });
 
-      stripePaymentIntentId = paymentIntent.id;
-    }
+      // Update invoice if payment was successful
+      if (payment.status === PaymentStatus.COMPLETED) {
+        await prisma.invoice.update({
+          where: { id: invoiceId },
+          data: {
+            status: 'PAID',
+            paidAt: new Date()
+          }
+        });
 
-    // Create payment record in database
-    const payment = await prisma.oneTimePayment.create({
-      data: {
-        amount,
-        currency,
-        status: stripePaymentIntentId ? PaymentStatus.COMPLETED : PaymentStatus.PENDING,
-        invoiceId,
-        customerId,
-        organizationId: organization.id,
-        stripePaymentIntentId,
-        description: description || `Payment for invoice ${invoice.number}`,
-        metadata
+        // Create payment success event
+        await createEvent({
+          type: 'PAYMENT_SUCCEEDED',
+          resourceType: 'PAYMENT',
+          resourceId: payment.id,
+          metadata: {
+            amount,
+            currency,
+            invoiceId
+          }
+        });
       }
-    });
 
-    // Update invoice status if payment was successful
-    if (payment.status === PaymentStatus.COMPLETED) {
-      await prisma.invoice.update({
-        where: { id: invoiceId },
-        data: {
-          status: 'PAID',
-          paidAt: new Date()
-        }
-      });
-
-      // Create event for invoice paid
+      return payment;
+    } catch (error) {
+      // Log payment failure
       await createEvent({
-        eventType: 'INVOICE_PAID',
+        type: 'PAYMENT_FAILED',
         resourceType: 'INVOICE',
         resourceId: invoiceId,
-        severity: 'INFO',
+        severity: 'ERROR',
         metadata: {
-          invoiceId,
-          paymentId: payment.id,
+          error: error.message,
           amount,
           currency
         }
       });
+
+      throw error;
     }
-
-    return payment;
-  } catch (error: any) {
-    // Create event for payment failure
-    await createEvent({
-      eventType: 'PAYMENT_FAILED',
-      resourceType: 'INVOICE',
-      resourceId: invoiceId,
-      severity: 'WARNING',
-      metadata: {
-        invoiceId,
-        error: error.message,
-        amount,
-        currency
-      }
-    });
-
-    throw error;
   }
-}
 
-export async function refundPayment(
-  paymentId: string,
-  amount?: number,
-  reason?: string
-) {
-  try {
-    const payment = await prisma.oneTimePayment.findUnique({
-      where: { id: paymentId }
+  /**
+   * Process a refund
+   */
+  public async processRefund(params: RefundParams) {
+    const { paymentId, amount, reason, metadata = {} } = params;
+
+    const payment = await prisma.payment.findUnique({
+      where: { id: paymentId },
+      include: {
+        invoice: true
+      }
     });
 
     if (!payment) {
@@ -147,137 +150,249 @@ export async function refundPayment(
     }
 
     if (payment.status !== PaymentStatus.COMPLETED) {
-      throw new Error('Payment cannot be refunded because it is not completed');
+      throw new Error('Can only refund completed payments');
     }
 
-    if (payment.refunded) {
-      throw new Error('Payment has already been refunded');
-    }
-
+    // Process refund in Stripe if applicable
     let stripeRefundId = null;
-
-    // Process refund in Stripe if payment has Stripe ID
     if (payment.stripePaymentIntentId) {
       const refund = await stripe.refunds.create({
         payment_intent: payment.stripePaymentIntentId,
         amount: amount || undefined,
-        reason: (reason as 'duplicate' | 'fraudulent' | 'requested_by_customer' | undefined) || undefined
+        reason: reason as Stripe.RefundCreateParams.Reason || undefined,
+        metadata: {
+          paymentId,
+          ...metadata
+        }
       });
 
       stripeRefundId = refund.id;
     }
 
-    // Update payment in database
-    const updatedPayment = await prisma.oneTimePayment.update({
-      where: { id: paymentId },
+    // Create refund record
+    const refund = await prisma.refund.create({
       data: {
-        refunded: true,
-        refundedAmount: amount || payment.amount,
-        refundedAt: new Date(),
-        refundReason: reason,
-        stripeRefundId
+        paymentId,
+        amount: amount || payment.amount,
+        reason,
+        status: PaymentStatus.COMPLETED,
+        stripeRefundId,
+        metadata
       }
     });
 
-    // Update invoice status if full refund
-    if (!amount || amount === payment.amount) {
-      await prisma.invoice.update({
-        where: { id: payment.invoiceId },
-        data: {
-          status: 'REFUNDED'
-        }
-      });
-    }
+    // Update payment status
+    await prisma.payment.update({
+      where: { id: paymentId },
+      data: {
+        status: amount === payment.amount ? PaymentStatus.REFUNDED : PaymentStatus.PARTIALLY_REFUNDED
+      }
+    });
 
-    // Create event for refund
+    // Create refund event
     await createEvent({
-      eventType: 'PAYMENT_REFUNDED',
+      type: 'PAYMENT_REFUNDED',
       resourceType: 'PAYMENT',
       resourceId: paymentId,
-      severity: 'INFO',
       metadata: {
-        paymentId,
-        invoiceId: payment.invoiceId,
-        amount: amount || payment.amount,
+        refundId: refund.id,
+        amount: refund.amount,
         reason
       }
     });
 
-    return updatedPayment;
-  } catch (error: any) {
-    // Create event for refund failure
-    await createEvent({
-      eventType: 'REFUND_FAILED',
-      resourceType: 'PAYMENT',
-      resourceId: paymentId,
-      severity: 'WARNING',
-      metadata: {
-        paymentId,
-        error: error.message,
-        amount
+    return refund;
+  }
+
+  /**
+   * Retry a failed payment
+   */
+  public async retryPayment(paymentId: string, newPaymentMethodId?: string) {
+    const payment = await prisma.payment.findUnique({
+      where: { id: paymentId },
+      include: {
+        invoice: true,
+        organization: true
       }
     });
 
-    throw error;
-  }
-}
-
-export async function getPaymentsByInvoice(invoiceId: string) {
-  return prisma.oneTimePayment.findMany({
-    where: { invoiceId }
-  });
-}
-
-export async function getPaymentsByCustomer(customerId: string, options?: {
-  limit?: number;
-  offset?: number;
-  status?: PaymentStatus;
-  startDate?: Date;
-  endDate?: Date;
-}) {
-  const { limit = 10, offset = 0, status, startDate, endDate } = options || {};
-
-  const where: any = { customerId };
-
-  if (status) {
-    where.status = status;
-  }
-
-  if (startDate || endDate) {
-    where.createdAt = {};
-    if (startDate) {
-      where.createdAt.gte = startDate;
+    if (!payment) {
+      throw new Error('Payment not found');
     }
-    if (endDate) {
-      where.createdAt.lte = endDate;
-    }
-  }
 
-  const [payments, total] = await Promise.all([
-    prisma.oneTimePayment.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      take: limit,
-      skip: offset,
-      include: {
-        invoice: {
-          select: {
-            id: true,
-            number: true,
-            status: true
-          }
+    if (payment.status !== PaymentStatus.FAILED) {
+      throw new Error('Can only retry failed payments');
+    }
+
+    // Update payment method if provided
+    if (newPaymentMethodId && payment.organization.stripeCustomerId) {
+      await stripe.customers.update(payment.organization.stripeCustomerId, {
+        default_payment_method: newPaymentMethodId
+      });
+    }
+
+    // Create new payment intent
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: payment.amount,
+      currency: payment.currency,
+      customer: payment.organization.stripeCustomerId!,
+      payment_method: newPaymentMethodId || undefined,
+      off_session: true,
+      confirm: true,
+      description: payment.description,
+      metadata: {
+        ...payment.metadata,
+        originalPaymentId: payment.id,
+        isRetry: true
+      }
+    });
+
+    // Create new payment record
+    const retryPayment = await prisma.payment.create({
+      data: {
+        invoiceId: payment.invoiceId,
+        organizationId: payment.organizationId,
+        amount: payment.amount,
+        currency: payment.currency,
+        status: PaymentStatus.COMPLETED,
+        stripePaymentIntentId: paymentIntent.id,
+        paymentMethodId: newPaymentMethodId || payment.paymentMethodId,
+        description: `Retry: ${payment.description}`,
+        metadata: {
+          ...payment.metadata,
+          originalPaymentId: payment.id,
+          isRetry: true
         }
       }
-    }),
-    prisma.oneTimePayment.count({ where })
-  ]);
+    });
 
-  return {
-    data: payments,
-    meta: {
-      total,
-      limit,
-      offset
+    // Update invoice if payment was successful
+    if (retryPayment.status === PaymentStatus.COMPLETED) {
+      await prisma.invoice.update({
+        where: { id: payment.invoiceId },
+        data: {
+          status: 'PAID',
+          paidAt: new Date()
+        }
+      });
+
+      // Create payment success event
+      await createEvent({
+        type: 'PAYMENT_RETRY_SUCCEEDED',
+        resourceType: 'PAYMENT',
+        resourceId: retryPayment.id,
+        metadata: {
+          originalPaymentId: payment.id,
+          amount: payment.amount,
+          currency: payment.currency
+        }
+      });
     }
-  };
-} 
+
+    return retryPayment;
+  }
+
+  /**
+   * Get payment history for an organization
+   */
+  public async getPaymentHistory(organizationId: string, options: {
+    status?: PaymentStatus[];
+    startDate?: Date;
+    endDate?: Date;
+    limit?: number;
+    offset?: number;
+  } = {}) {
+    const {
+      status,
+      startDate,
+      endDate,
+      limit = 10,
+      offset = 0
+    } = options;
+
+    return prisma.payment.findMany({
+      where: {
+        organizationId,
+        ...(status ? { status: { in: status } } : {}),
+        ...(startDate || endDate ? {
+          createdAt: {
+            ...(startDate ? { gte: startDate } : {}),
+            ...(endDate ? { lte: endDate } : {})
+          }
+        } : {})
+      },
+      include: {
+        invoice: true,
+        refunds: true
+      },
+      orderBy: {
+        createdAt: 'desc'
+      },
+      take: limit,
+      skip: offset
+    });
+  }
+
+  /**
+   * Get detailed payment stats for an organization
+   */
+  public async getPaymentStats(organizationId: string, startDate: Date, endDate: Date) {
+    const payments = await prisma.payment.findMany({
+      where: {
+        organizationId,
+        createdAt: {
+          gte: startDate,
+          lte: endDate
+        }
+      },
+      include: {
+        refunds: true
+      }
+    });
+
+    const stats = {
+      totalPayments: payments.length,
+      totalAmount: 0,
+      successfulPayments: 0,
+      failedPayments: 0,
+      refundedAmount: 0,
+      netAmount: 0,
+      byCurrency: {} as Record<string, {
+        totalAmount: number;
+        refundedAmount: number;
+        netAmount: number;
+      }>
+    };
+
+    for (const payment of payments) {
+      if (!stats.byCurrency[payment.currency]) {
+        stats.byCurrency[payment.currency] = {
+          totalAmount: 0,
+          refundedAmount: 0,
+          netAmount: 0
+        };
+      }
+
+      if (payment.status === PaymentStatus.COMPLETED || payment.status === PaymentStatus.PARTIALLY_REFUNDED) {
+        stats.successfulPayments++;
+        stats.totalAmount += payment.amount;
+        stats.byCurrency[payment.currency].totalAmount += payment.amount;
+      } else if (payment.status === PaymentStatus.FAILED) {
+        stats.failedPayments++;
+      }
+
+      const refundedAmount = payment.refunds.reduce((sum, refund) => sum + refund.amount, 0);
+      stats.refundedAmount += refundedAmount;
+      stats.byCurrency[payment.currency].refundedAmount += refundedAmount;
+    }
+
+    stats.netAmount = stats.totalAmount - stats.refundedAmount;
+    for (const currency in stats.byCurrency) {
+      stats.byCurrency[currency].netAmount = 
+        stats.byCurrency[currency].totalAmount - 
+        stats.byCurrency[currency].refundedAmount;
+    }
+
+    return stats;
+  }
+}

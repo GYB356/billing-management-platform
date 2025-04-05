@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Bell } from 'lucide-react';
 import {
   DropdownMenu,
@@ -8,164 +9,111 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { useSession } from 'next-auth/react';
+import { Skeleton } from '@/components/ui/skeleton';
 import { formatDistanceToNow } from 'date-fns';
 
 interface Notification {
   id: string;
   title: string;
   message: string;
-  type: 'info' | 'success' | 'warning' | 'error';
-  link?: string;
+  type: 'INFO' | 'SUCCESS' | 'WARNING' | 'ERROR';
   read: boolean;
   createdAt: string;
 }
 
-export function NotificationBell() {
-  const { data: session } = useSession();
-  const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [unreadCount, setUnreadCount] = useState(0);
-  const [loading, setLoading] = useState(true);
+async function getUnreadNotifications(): Promise<Notification[]> {
+  const response = await fetch('/api/notifications/unread');
+  if (!response.ok) {
+    throw new Error('Failed to fetch notifications');
+  }
+  return response.json();
+}
 
-  useEffect(() => {
-    if (session?.user) {
-      fetchNotifications();
-    }
-  }, [session]);
+async function markAsRead(notificationIds: string[]) {
+  await fetch('/api/notifications/mark-read', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ notificationIds }),
+  });
+}
 
-  const fetchNotifications = async () => {
-    try {
-      const response = await fetch('/api/notifications');
-      if (!response.ok) throw new Error('Failed to fetch notifications');
-      const data = await response.json();
-      setNotifications(data.notifications);
-      setUnreadCount(data.unreadCount);
-    } catch (error) {
-      console.error('Error fetching notifications:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+export default function NotificationBell() {
+  const [open, setOpen] = useState(false);
+  
+  const { data: notifications, isLoading, refetch } = useQuery({
+    queryKey: ['unread-notifications'],
+    queryFn: getUnreadNotifications,
+    refetchInterval: 30000, // Refresh every 30 seconds
+  });
 
-  const markAsRead = async (notificationId: string) => {
-    try {
-      await fetch(`/api/notifications/${notificationId}/read`, {
-        method: 'POST',
-      });
-      setNotifications(notifications.map(n =>
-        n.id === notificationId ? { ...n, read: true } : n
-      ));
-      setUnreadCount(prev => Math.max(0, prev - 1));
-    } catch (error) {
-      console.error('Error marking notification as read:', error);
-    }
-  };
-
-  const markAllAsRead = async () => {
-    try {
-      await fetch('/api/notifications/read-all', {
-        method: 'POST',
-      });
-      setNotifications(notifications.map(n => ({ ...n, read: true })));
-      setUnreadCount(0);
-    } catch (error) {
-      console.error('Error marking all notifications as read:', error);
+  const handleOpen = async (isOpen: boolean) => {
+    setOpen(isOpen);
+    if (isOpen && notifications?.length) {
+      // Mark notifications as read when opening the dropdown
+      await markAsRead(notifications.map(n => n.id));
+      refetch();
     }
   };
 
   const getNotificationColor = (type: Notification['type']) => {
     switch (type) {
-      case 'success':
-        return 'text-green-500';
-      case 'warning':
-        return 'text-yellow-500';
-      case 'error':
-        return 'text-red-500';
+      case 'ERROR':
+        return 'text-red-600';
+      case 'WARNING':
+        return 'text-yellow-600';
+      case 'SUCCESS':
+        return 'text-green-600';
       default:
-        return 'text-blue-500';
+        return 'text-blue-600';
     }
   };
 
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={handleOpen}>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" className="relative">
+        <Button variant="ghost" size="icon" className="relative">
           <Bell className="h-5 w-5" />
-          {unreadCount > 0 && (
-            <span className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-red-500 text-xs text-white flex items-center justify-center">
-              {unreadCount}
-            </span>
+          {notifications?.length > 0 && (
+            <Badge
+              variant="destructive"
+              className="absolute -top-1 -right-1 h-5 w-5 flex items-center justify-center rounded-full"
+            >
+              {notifications.length}
+            </Badge>
           )}
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-80">
-        <div className="flex items-center justify-between p-2 border-b">
-          <h3 className="font-semibold">Notifications</h3>
-          {unreadCount > 0 && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={markAllAsRead}
-              className="text-xs"
-            >
-              Mark all as read
-            </Button>
-          )}
-        </div>
-        <div className="max-h-96 overflow-y-auto">
-          {loading ? (
-            <div className="p-4 text-center">Loading...</div>
-          ) : notifications.length === 0 ? (
-            <div className="p-4 text-center text-gray-500">
-              No notifications
-            </div>
-          ) : (
-            notifications.map((notification) => (
-              <DropdownMenuItem
-                key={notification.id}
-                className={`p-4 border-b cursor-pointer ${
-                  !notification.read ? 'bg-gray-50' : ''
-                }`}
-                onClick={() => {
-                  if (!notification.read) {
-                    markAsRead(notification.id);
-                  }
-                  if (notification.link) {
-                    window.location.href = notification.link;
-                  }
-                }}
-              >
-                <div className="flex items-start gap-2">
-                  <div className={`mt-1 ${getNotificationColor(notification.type)}`}>
-                    <Bell className="h-4 w-4" />
-                  </div>
-                  <div className="flex-1">
-                    <p className="font-medium">{notification.title}</p>
-                    <p className="text-sm text-gray-600">{notification.message}</p>
-                    <p className="text-xs text-gray-400 mt-1">
-                      {formatDistanceToNow(new Date(notification.createdAt), {
-                        addSuffix: true,
-                      })}
-                    </p>
-                  </div>
-                </div>
-              </DropdownMenuItem>
-            ))
-          )}
-        </div>
-        {notifications.length > 0 && (
-          <div className="p-2 border-t text-center">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => window.location.href = '/notifications'}
-            >
-              View all notifications
-            </Button>
+        {isLoading ? (
+          <div className="p-4 space-y-3">
+            <Skeleton className="h-14 w-full" />
+            <Skeleton className="h-14 w-full" />
+            <Skeleton className="h-14 w-full" />
           </div>
+        ) : notifications?.length === 0 ? (
+          <div className="p-4 text-center text-sm text-gray-500">
+            No new notifications
+          </div>
+        ) : (
+          notifications?.map((notification) => (
+            <DropdownMenuItem key={notification.id} className="p-4">
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <p className={`font-medium ${getNotificationColor(notification.type)}`}>
+                    {notification.title}
+                  </p>
+                  <span className="text-xs text-gray-400">
+                    {formatDistanceToNow(new Date(notification.createdAt), { addSuffix: true })}
+                  </span>
+                </div>
+                <p className="text-sm text-gray-600">{notification.message}</p>
+              </div>
+            </DropdownMenuItem>
+          ))
         )}
       </DropdownMenuContent>
     </DropdownMenu>
   );
-} 
+}

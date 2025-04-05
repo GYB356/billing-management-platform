@@ -3,11 +3,13 @@ import { prisma } from '@/lib/prisma';
 import { 
   Subscription, 
   PricingPlan, 
-  Organization, 
-  SubscriptionStatus, 
+  Organization,
+  SubscriptionStatus,
   PlanFeature 
 } from '@prisma/client';
 import { sendSubscriptionEmail } from '@/lib/email';
+import { InvoiceService } from './invoice-service';
+import { UsageService } from './usage-service';
 import Stripe from 'stripe';
 
 export interface SubscriptionParams {
@@ -23,625 +25,385 @@ export interface SubscriptionParams {
   taxRateIds?: string[];
 }
 
+export interface PlanChangeParams {
+  subscriptionId: string;
+  newPlanId: string;
+  immediateChange?: boolean;
+  preserveUsage?: boolean;
+  prorationDate?: Date;
+}
+
 export interface SubscriptionWithDetails extends Subscription {
   plan: PricingPlan;
   organization: Organization;
   planFeatures?: PlanFeature[];
 }
 
-/**
- * Creates a new subscription
- */
-export async function createSubscription(params: SubscriptionParams): Promise<SubscriptionWithDetails> {
-  const { 
-    organizationId, 
-    planId, 
-    customerId, 
-    priceId, 
-    quantity = 1,
-    trialDays,
-    paymentMethodId,
-    metadata = {},
-    couponId,
-    taxRateIds = []
-  } = params;
+export class SubscriptionService {
+  private readonly invoiceService: InvoiceService;
+  private readonly usageService: UsageService;
 
-  // Retrieve plan details
-  const plan = await prisma.pricingPlan.findUnique({
-    where: { id: planId },
-    include: {
-      planFeatures: {
-        include: {
-          feature: true
+  constructor() {
+    this.invoiceService = new InvoiceService();
+    this.usageService = new UsageService();
+  }
+
+  /**
+   * Creates a new subscription
+   */
+  public async createSubscription(params: SubscriptionParams): Promise<SubscriptionWithDetails> {
+    const { 
+      customerId,
+      organizationId,
+      planId,
+      priceId,
+      quantity = 1,
+      trialDays,
+      paymentMethodId,
+      metadata = {},
+      couponId,
+      taxRateIds = []
+    } = params;
+
+    // Get the organization
+    const organization = await prisma.organization.findUnique({
+      where: { id: organizationId }
+    });
+
+    if (!organization) {
+      throw new Error('Organization not found');
+    }
+
+    // Get the plan
+    const plan = await prisma.pricingPlan.findUnique({
+      where: { id: planId }
+    });
+
+    if (!plan) {
+      throw new Error('Plan not found');
+    }
+
+    // Create Stripe subscription if Stripe is enabled
+    let stripeSubscription;
+    if (organization.stripeCustomerId) {
+      const stripeSubscriptionParams: Stripe.SubscriptionCreateParams = {
+        customer: organization.stripeCustomerId,
+        items: [{ price: priceId, quantity }],
+        expand: ['latest_invoice.payment_intent'],
+        metadata: {
+          organizationId,
+          planId,
+          ...metadata
         }
+      };
+
+      // Add trial if specified
+      if (trialDays) {
+        stripeSubscriptionParams.trial_period_days = trialDays;
       }
-    }
-  });
 
-  if (!plan) {
-    throw new Error('Plan not found');
-  }
-
-  // Create subscription in Stripe
-  const stripeSubscriptionParams: Stripe.SubscriptionCreateParams = {
-    customer: customerId,
-    items: [
-      {
-        price: priceId,
-        quantity
+      // Add payment method if specified
+      if (paymentMethodId) {
+        stripeSubscriptionParams.default_payment_method = paymentMethodId;
       }
-    ],
-    payment_behavior: 'default_incomplete',
-    payment_settings: {
-      save_default_payment_method: 'on_subscription',
-    },
-    expand: ['latest_invoice.payment_intent'],
-    metadata: {
-      organizationId,
-      planId,
-      ...metadata
+
+      // Add coupon if specified
+      if (couponId) {
+        stripeSubscriptionParams.coupon = couponId;
+      }
+
+      // Add tax rates if specified
+      if (taxRateIds.length > 0) {
+        stripeSubscriptionParams.default_tax_rates = taxRateIds;
+      }
+
+      stripeSubscription = await stripe.subscriptions.create(stripeSubscriptionParams);
     }
-  };
 
-  // Add trial if specified
-  if (trialDays) {
-    stripeSubscriptionParams.trial_period_days = trialDays;
-  }
+    // Create subscription in database
+    const subscription = await prisma.subscription.create({
+      data: {
+        organizationId,
+        planId,
+        status: stripeSubscription ? 'ACTIVE' : 'PENDING',
+        quantity,
+        currentPeriodStart: stripeSubscription 
+          ? new Date(stripeSubscription.current_period_start * 1000) 
+          : new Date(),
+        currentPeriodEnd: stripeSubscription
+          ? new Date(stripeSubscription.current_period_end * 1000)
+          : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        stripeSubscriptionId: stripeSubscription?.id,
+        trialEndsAt: stripeSubscription?.trial_end 
+          ? new Date(stripeSubscription.trial_end * 1000) 
+          : null,
+        metadata
+      },
+      include: {
+        plan: true,
+        organization: true
+      }
+    });
 
-  // Add payment method if specified
-  if (paymentMethodId) {
-    stripeSubscriptionParams.default_payment_method = paymentMethodId;
-  }
-
-  // Add coupon if specified
-  if (couponId) {
-    stripeSubscriptionParams.coupon = couponId;
-  }
-
-  // Add tax rates if specified
-  if (taxRateIds.length > 0) {
-    stripeSubscriptionParams.default_tax_rates = taxRateIds;
-  }
-
-  // Create subscription in Stripe
-  let stripeSubscription;
-  try {
-    stripeSubscription = await stripe.subscriptions.create(stripeSubscriptionParams);
-  } catch (error) {
-    console.error('Error creating subscription in Stripe:', error);
-    throw new Error('Failed to create subscription in Stripe');
-  }
-
-  // Determine subscription status
-  let status: SubscriptionStatus = SubscriptionStatus.ACTIVE;
-  if (stripeSubscription.status === 'trialing') {
-    status = SubscriptionStatus.TRIALING;
-  } else if (stripeSubscription.status === 'incomplete') {
-    status = SubscriptionStatus.INCOMPLETE;
-  }
-
-  // Create subscription in database
-  const subscription = await prisma.subscription.create({
-    data: {
-      organizationId,
-      planId,
-      status,
-      quantity,
-      stripeSubscriptionId: stripeSubscription.id,
-      stripeCustomerId: customerId,
-      currentPeriodStart: new Date(stripeSubscription.current_period_start * 1000),
-      currentPeriodEnd: new Date(stripeSubscription.current_period_end * 1000),
-      cancelAtPeriodEnd: stripeSubscription.cancel_at_period_end,
-      trialEndsAt: stripeSubscription.trial_end 
-        ? new Date(stripeSubscription.trial_end * 1000) 
-        : null,
-      metadata
-    },
-    include: {
-      plan: true,
-      organization: true
-    }
-  });
-
-  // Send email notification
-  try {
+    // Send email notification
     await sendSubscriptionEmail(
-      subscription.organization.email!,
+      organization.email!,
       'subscription_created',
       {
-        planName: subscription.plan.name,
+        planName: plan.name,
         startDate: subscription.currentPeriodStart,
         endDate: subscription.currentPeriodEnd,
         price: plan.basePrice / 100, // Convert from cents to dollars
         currency: plan.currency
       }
     );
-  } catch (error) {
-    console.error('Error sending subscription email:', error);
-    // Don't throw error if email fails
+
+    return subscription;
   }
 
-  return subscription;
-}
+  /**
+   * Update subscription plan
+   */
+  public async changePlan({
+    subscriptionId,
+    newPlanId,
+    immediateChange = false,
+    preserveUsage = true,
+    prorationDate
+  }: PlanChangeParams): Promise<SubscriptionWithDetails> {
+    const subscription = await prisma.subscription.findUnique({
+      where: { id: subscriptionId },
+      include: {
+        organization: true,
+        plan: true
+      }
+    });
 
-/**
- * Updates an existing subscription
- */
-export async function updateSubscription(
-  subscriptionId: string,
-  params: {
-    planId?: string;
-    priceId?: string;
-    quantity?: number;
-    metadata?: Record<string, any>;
-    cancelAtPeriodEnd?: boolean;
-    couponId?: string;
-    taxRateIds?: string[];
-  }
-): Promise<SubscriptionWithDetails> {
-  const { 
-    planId, 
-    priceId, 
-    quantity, 
-    metadata, 
-    cancelAtPeriodEnd,
-    couponId,
-    taxRateIds
-  } = params;
-
-  // Retrieve existing subscription
-  const existingSubscription = await prisma.subscription.findUnique({
-    where: { id: subscriptionId },
-    include: {
-      plan: true,
-      organization: true
+    if (!subscription) {
+      throw new Error('Subscription not found');
     }
-  });
 
-  if (!existingSubscription) {
-    throw new Error('Subscription not found');
-  }
+    const newPlan = await prisma.pricingPlan.findUnique({
+      where: { id: newPlanId }
+    });
 
-  // Update subscription in Stripe if it exists
-  if (existingSubscription.stripeSubscriptionId) {
-    try {
-      const updateParams: Stripe.SubscriptionUpdateParams = {};
+    if (!newPlan) {
+      throw new Error('New plan not found');
+    }
 
-      if (priceId) {
-        updateParams.items = [
-          {
-            id: await getStripeSubscriptionItemId(existingSubscription.stripeSubscriptionId),
-            price: priceId,
-            quantity: quantity || existingSubscription.quantity
-          }
-        ];
-      } else if (quantity) {
-        updateParams.items = [
-          {
-            id: await getStripeSubscriptionItemId(existingSubscription.stripeSubscriptionId),
-            quantity
-          }
-        ];
+    // Handle usage transfer if needed
+    if (preserveUsage) {
+      await this.transferUsage(subscription, newPlan);
+    }
+
+    // Update in Stripe if applicable
+    if (subscription.stripeSubscriptionId) {
+      const stripeParams: Stripe.SubscriptionUpdateParams = {
+        proration_behavior: immediateChange ? 'always_invoice' : 'create_prorations',
+        items: [{
+          id: subscription.stripeSubscriptionId,
+          price: newPlan.stripePriceId!,
+          quantity: subscription.quantity
+        }]
+      };
+
+      if (prorationDate) {
+        stripeParams.proration_date = Math.floor(prorationDate.getTime() / 1000);
       }
 
-      if (metadata) {
-        updateParams.metadata = {
-          ...existingSubscription.metadata as Record<string, any>,
-          ...metadata
-        };
-      }
-
-      if (cancelAtPeriodEnd !== undefined) {
-        updateParams.cancel_at_period_end = cancelAtPeriodEnd;
-      }
-
-      if (couponId) {
-        updateParams.coupon = couponId;
-      }
-
-      if (taxRateIds && taxRateIds.length > 0) {
-        updateParams.default_tax_rates = taxRateIds;
-      }
-
-      const stripeSubscription = await stripe.subscriptions.update(
-        existingSubscription.stripeSubscriptionId,
-        updateParams
+      await stripe.subscriptions.update(
+        subscription.stripeSubscriptionId,
+        stripeParams
       );
+    }
 
-      // Update local status if it changed in Stripe
-      if (stripeSubscription.status !== existingSubscription.status.toLowerCase()) {
-        let newStatus: SubscriptionStatus;
-        switch (stripeSubscription.status) {
-          case 'active':
-            newStatus = SubscriptionStatus.ACTIVE;
-            break;
-          case 'trialing':
-            newStatus = SubscriptionStatus.TRIALING;
-            break;
-          case 'past_due':
-            newStatus = SubscriptionStatus.PAST_DUE;
-            break;
-          case 'canceled':
-            newStatus = SubscriptionStatus.CANCELED;
-            break;
-          case 'incomplete':
-            newStatus = SubscriptionStatus.INCOMPLETE;
-            break;
-          case 'incomplete_expired':
-            newStatus = SubscriptionStatus.INCOMPLETE_EXPIRED;
-            break;
-          case 'unpaid':
-            newStatus = SubscriptionStatus.UNPAID;
-            break;
-          default:
-            newStatus = existingSubscription.status;
-        }
-
-        existingSubscription.status = newStatus;
+    // Update in database
+    const updatedSubscription = await prisma.subscription.update({
+      where: { id: subscriptionId },
+      data: {
+        planId: newPlanId,
+        updatedAt: new Date()
+      },
+      include: {
+        plan: true,
+        organization: true
       }
-    } catch (error) {
-      console.error('Error updating subscription in Stripe:', error);
-      throw new Error('Failed to update subscription in Stripe');
+    });
+
+    // Create change event
+    await createEvent({
+      type: 'SUBSCRIPTION_PLAN_CHANGED',
+      resourceType: 'SUBSCRIPTION',
+      resourceId: subscriptionId,
+      metadata: {
+        oldPlanId: subscription.planId,
+        newPlanId,
+        immediateChange,
+        preserveUsage
+      }
+    });
+
+    // Send notification
+    await sendSubscriptionEmail(
+      subscription.organization.email!,
+      'plan_changed',
+      {
+        oldPlan: subscription.plan.name,
+        newPlan: newPlan.name,
+        effectiveDate: immediateChange ? new Date() : subscription.currentPeriodEnd
+      }
+    );
+
+    return updatedSubscription;
+  }
+
+  /**
+   * Cancel subscription
+   */
+  public async cancelSubscription(
+    subscriptionId: string,
+    cancelImmediately = false
+  ): Promise<SubscriptionWithDetails> {
+    const subscription = await prisma.subscription.findUnique({
+      where: { id: subscriptionId },
+      include: {
+        organization: true,
+        plan: true
+      }
+    });
+
+    if (!subscription) {
+      throw new Error('Subscription not found');
     }
-  }
 
-  // Prepare update data
-  const updateData: any = {};
-  
-  if (planId) {
-    updateData.planId = planId;
-  }
-  
-  if (quantity) {
-    updateData.quantity = quantity;
-  }
-  
-  if (metadata) {
-    updateData.metadata = {
-      ...existingSubscription.metadata as Record<string, any>,
-      ...metadata
-    };
-  }
-  
-  if (cancelAtPeriodEnd !== undefined) {
-    updateData.cancelAtPeriodEnd = cancelAtPeriodEnd;
-    
-    if (cancelAtPeriodEnd) {
-      updateData.canceledAt = new Date();
-    } else {
-      updateData.canceledAt = null;
-    }
-  }
-
-  // Update subscription in database
-  const subscription = await prisma.subscription.update({
-    where: { id: subscriptionId },
-    data: updateData,
-    include: {
-      plan: true,
-      organization: true
-    }
-  });
-
-  return subscription;
-}
-
-/**
- * Cancels a subscription
- */
-export async function cancelSubscription(
-  subscriptionId: string,
-  cancelImmediately: boolean = false
-): Promise<SubscriptionWithDetails> {
-  // Retrieve existing subscription
-  const subscription = await prisma.subscription.findUnique({
-    where: { id: subscriptionId },
-    include: {
-      plan: true,
-      organization: true
-    }
-  });
-
-  if (!subscription) {
-    throw new Error('Subscription not found');
-  }
-
-  // Cancel subscription in Stripe if it exists
-  if (subscription.stripeSubscriptionId) {
-    try {
+    // Cancel in Stripe if applicable
+    if (subscription.stripeSubscriptionId) {
       if (cancelImmediately) {
-        await stripe.subscriptions.del(subscription.stripeSubscriptionId);
+        await stripe.subscriptions.cancel(subscription.stripeSubscriptionId);
       } else {
         await stripe.subscriptions.update(subscription.stripeSubscriptionId, {
           cancel_at_period_end: true
         });
       }
-    } catch (error) {
-      console.error('Error canceling subscription in Stripe:', error);
-      throw new Error('Failed to cancel subscription in Stripe');
     }
-  }
 
-  // Update subscription in database
-  const updatedSubscription = await prisma.subscription.update({
-    where: { id: subscriptionId },
-    data: {
-      cancelAtPeriodEnd: !cancelImmediately,
-      canceledAt: new Date(),
-      status: cancelImmediately ? SubscriptionStatus.CANCELED : subscription.status,
-      endDate: cancelImmediately ? new Date() : subscription.currentPeriodEnd
-    },
-    include: {
-      plan: true,
-      organization: true
-    }
-  });
-
-  // Send email notification
-  try {
-    await sendSubscriptionEmail(
-      subscription.organization.email!,
-      'subscription_canceled',
-      {
-        planName: subscription.plan.name,
-        canceledAt: new Date(),
-        endDate: cancelImmediately ? new Date() : subscription.currentPeriodEnd
-      }
-    );
-  } catch (error) {
-    console.error('Error sending subscription cancellation email:', error);
-    // Don't throw error if email fails
-  }
-
-  return updatedSubscription;
-}
-
-/**
- * Pauses a subscription
- */
-export async function pauseSubscription(
-  subscriptionId: string,
-  pauseDuration: number,
-  reason?: string
-): Promise<SubscriptionWithDetails> {
-  // Validate pause duration
-  if (pauseDuration < 1 || pauseDuration > 90) {
-    throw new Error('Pause duration must be between 1 and 90 days');
-  }
-
-  // Retrieve existing subscription
-  const subscription = await prisma.subscription.findUnique({
-    where: { id: subscriptionId },
-    include: {
-      plan: true,
-      organization: true
-    }
-  });
-
-  if (!subscription) {
-    throw new Error('Subscription not found');
-  }
-
-  if (subscription.isPaused) {
-    throw new Error('Subscription is already paused');
-  }
-
-  if (subscription.status !== SubscriptionStatus.ACTIVE && subscription.status !== SubscriptionStatus.TRIALING) {
-    throw new Error('Only active or trialing subscriptions can be paused');
-  }
-
-  // Calculate pause dates
-  const pausedAt = new Date();
-  const resumesAt = new Date(Date.now() + pauseDuration * 24 * 60 * 60 * 1000);
-
-  // Update subscription in Stripe if it exists
-  if (subscription.stripeSubscriptionId) {
-    try {
-      await stripe.subscriptions.update(subscription.stripeSubscriptionId, {
-        pause_collection: {
-          behavior: 'void',
-          resumes_at: Math.floor(resumesAt.getTime() / 1000),
-        },
-        metadata: {
-          ...subscription.metadata as Record<string, any>,
-          isPaused: 'true',
-          pausedAt: pausedAt.toISOString(),
-          resumesAt: resumesAt.toISOString(),
-          pauseReason: reason || 'User requested'
-        }
-      });
-    } catch (error) {
-      console.error('Error pausing subscription in Stripe:', error);
-      throw new Error('Failed to pause subscription in Stripe');
-    }
-  }
-
-  // Create pause history record
-  await prisma.pauseHistory.create({
-    data: {
-      subscriptionId,
-      pausedAt,
-      resumesAt,
-      reason
-    }
-  });
-
-  // Update subscription in database
-  const updatedSubscription = await prisma.subscription.update({
-    where: { id: subscriptionId },
-    data: {
-      isPaused: true,
-      pausedAt,
-      resumesAt,
-      pauseReason: reason,
-      status: SubscriptionStatus.PAUSED
-    },
-    include: {
-      plan: true,
-      organization: true
-    }
-  });
-
-  // Send email notification
-  try {
-    await sendSubscriptionEmail(
-      subscription.organization.email!,
-      'subscription_paused',
-      {
-        planName: subscription.plan.name,
-        pausedAt,
-        resumesAt,
-        reason: reason || 'Not specified'
-      }
-    );
-  } catch (error) {
-    console.error('Error sending subscription pause email:', error);
-    // Don't throw error if email fails
-  }
-
-  return updatedSubscription;
-}
-
-/**
- * Resumes a paused subscription
- */
-export async function resumeSubscription(
-  subscriptionId: string
-): Promise<SubscriptionWithDetails> {
-  // Retrieve existing subscription
-  const subscription = await prisma.subscription.findUnique({
-    where: { id: subscriptionId },
-    include: {
-      plan: true,
-      organization: true
-    }
-  });
-
-  if (!subscription) {
-    throw new Error('Subscription not found');
-  }
-
-  if (!subscription.isPaused) {
-    throw new Error('Subscription is not paused');
-  }
-
-  // Resume subscription in Stripe if it exists
-  if (subscription.stripeSubscriptionId) {
-    try {
-      await stripe.subscriptions.update(subscription.stripeSubscriptionId, {
-        pause_collection: '',
-        metadata: {
-          ...subscription.metadata as Record<string, any>,
-          isPaused: 'false',
-          resumedAt: new Date().toISOString()
-        }
-      });
-    } catch (error) {
-      console.error('Error resuming subscription in Stripe:', error);
-      throw new Error('Failed to resume subscription in Stripe');
-    }
-  }
-
-  // Update pause history record
-  const pauseHistory = await prisma.pauseHistory.findFirst({
-    where: {
-      subscriptionId,
-      resumedAt: null
-    },
-    orderBy: {
-      pausedAt: 'desc'
-    }
-  });
-
-  if (pauseHistory) {
-    await prisma.pauseHistory.update({
-      where: { id: pauseHistory.id },
+    // Update in database
+    const updatedSubscription = await prisma.subscription.update({
+      where: { id: subscriptionId },
       data: {
-        resumedAt: new Date()
+        status: cancelImmediately ? 'CANCELLED' : 'ACTIVE',
+        canceledAt: new Date(),
+        cancelAtPeriodEnd: !cancelImmediately,
+        endDate: cancelImmediately ? new Date() : subscription.currentPeriodEnd
+      },
+      include: {
+        plan: true,
+        organization: true
       }
     });
+
+    // Send notification
+    await sendSubscriptionEmail(
+      subscription.organization.email!,
+      'subscription_cancelled',
+      {
+        planName: subscription.plan.name,
+        effectiveDate: cancelImmediately ? new Date() : subscription.currentPeriodEnd
+      }
+    );
+
+    return updatedSubscription;
   }
 
-  // Update subscription in database
-  const updatedSubscription = await prisma.subscription.update({
-    where: { id: subscriptionId },
-    data: {
-      isPaused: false,
-      pausedAt: null,
-      resumesAt: null,
-      pauseReason: null,
-      status: SubscriptionStatus.ACTIVE
-    },
-    include: {
-      plan: true,
-      organization: true
-    }
-  });
+  /**
+   * Resume cancelled subscription
+   */
+  public async resumeSubscription(subscriptionId: string): Promise<SubscriptionWithDetails> {
+    const subscription = await prisma.subscription.findUnique({
+      where: { id: subscriptionId },
+      include: {
+        organization: true,
+        plan: true
+      }
+    });
 
-  // Send email notification
-  try {
+    if (!subscription) {
+      throw new Error('Subscription not found');
+    }
+
+    if (!subscription.cancelAtPeriodEnd) {
+      throw new Error('Subscription is not scheduled for cancellation');
+    }
+
+    // Resume in Stripe if applicable
+    if (subscription.stripeSubscriptionId) {
+      await stripe.subscriptions.update(subscription.stripeSubscriptionId, {
+        cancel_at_period_end: false
+      });
+    }
+
+    // Update in database
+    const updatedSubscription = await prisma.subscription.update({
+      where: { id: subscriptionId },
+      data: {
+        cancelAtPeriodEnd: false,
+        canceledAt: null,
+        endDate: null
+      },
+      include: {
+        plan: true,
+        organization: true
+      }
+    });
+
+    // Send notification
     await sendSubscriptionEmail(
       subscription.organization.email!,
       'subscription_resumed',
       {
-        planName: subscription.plan.name,
-        resumedAt: new Date()
+        planName: subscription.plan.name
       }
     );
-  } catch (error) {
-    console.error('Error sending subscription resume email:', error);
-    // Don't throw error if email fails
+
+    return updatedSubscription;
   }
 
-  return updatedSubscription;
-}
+  /**
+   * Transfer usage data between plans
+   */
+  private async transferUsage(
+    oldSubscription: SubscriptionWithDetails,
+    newPlan: PricingPlan
+  ): Promise<void> {
+    // Get current usage for all features
+    const usage = await this.usageService.getSubscriptionUsageSummary(
+      oldSubscription.id,
+      oldSubscription.currentPeriodStart!,
+      new Date()
+    );
 
-/**
- * Gets the Stripe subscription item ID for a subscription
- */
-async function getStripeSubscriptionItemId(stripeSubscriptionId: string): Promise<string> {
-  const subscription = await stripe.subscriptions.retrieve(stripeSubscriptionId, {
-    expand: ['items']
-  });
+    // Transfer usage to new plan where feature mappings exist
+    for (const featureUsage of usage.features) {
+      const oldFeature = featureUsage.feature;
+      const newFeature = await prisma.planFeature.findFirst({
+        where: {
+          planId: newPlan.id,
+          code: oldFeature.code // Assuming features have a code that maps between plans
+        }
+      });
 
-  if (!subscription.items.data || subscription.items.data.length === 0) {
-    throw new Error('No subscription items found');
-  }
-
-  return subscription.items.data[0].id;
-}
-
-/**
- * Gets a subscription by ID
- */
-export async function getSubscription(subscriptionId: string): Promise<SubscriptionWithDetails | null> {
-  const subscription = await prisma.subscription.findUnique({
-    where: { id: subscriptionId },
-    include: {
-      plan: true,
-      organization: true,
-    }
-  });
-
-  return subscription;
-}
-
-/**
- * Gets all active subscriptions for an organization
- */
-export async function getActiveSubscriptionsForOrganization(organizationId: string): Promise<SubscriptionWithDetails[]> {
-  const subscriptions = await prisma.subscription.findMany({
-    where: {
-      organizationId,
-      status: {
-        in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING]
+      if (newFeature) {
+        await this.usageService.recordUsage({
+          subscriptionId: oldSubscription.id,
+          featureId: newFeature.id,
+          quantity: featureUsage.totalUsage,
+          timestamp: new Date(),
+          metadata: {
+            transferred: true,
+            fromFeatureId: oldFeature.id
+          }
+        });
       }
-    },
-    include: {
-      plan: true,
-      organization: true,
     }
-  });
-
-  return subscriptions;
-} 
+  }
+}

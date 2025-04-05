@@ -315,12 +315,12 @@ export async function recordUsage(
         organization: {
           include: {
             users: {
-      where: {
+              where: {
                 role: 'ADMIN',
               },
             },
           },
-      },
+        },
       },
     });
 
@@ -376,6 +376,125 @@ async function sendUsageNotification(
     message,
     ...data,
   });
+}
+
+/**
+ * Send usage notification email
+ */
+async function sendUsageNotification(
+  subscriptionId: string,
+  featureId: string,
+  usagePercent: number
+): Promise<void> {
+  const subscription = await prisma.subscription.findUnique({
+    where: { id: subscriptionId },
+    include: {
+      organization: true,
+      plan: {
+        include: {
+          planFeatures: {
+            include: { feature: true }
+          }
+        }
+      }
+    }
+  });
+
+  if (!subscription?.organization?.email) return;
+
+  const feature = subscription.plan.planFeatures.find(pf => pf.feature.id === featureId)?.feature;
+  if (!feature) return;
+
+  // Send different notifications based on usage percentage
+  if (usagePercent >= 90) {
+    await createEvent({
+      type: 'USAGE_CRITICAL',
+      resourceType: 'SUBSCRIPTION',
+      resourceId: subscriptionId,
+      severity: 'HIGH',
+      metadata: {
+        featureId,
+        featureName: feature.name,
+        usagePercent
+      }
+    });
+  } else if (usagePercent >= 75) {
+    await createEvent({
+      type: 'USAGE_WARNING',
+      resourceType: 'SUBSCRIPTION',
+      resourceId: subscriptionId,
+      severity: 'MEDIUM',
+      metadata: {
+        featureId,
+        featureName: feature.name,
+        usagePercent
+      }
+    });
+  }
+}
+
+/**
+ * Aggregate and report usage for billing period end
+ */
+export async function processBillingPeriodUsage(subscriptionId: string): Promise<void> {
+  const subscription = await prisma.subscription.findUnique({
+    where: { id: subscriptionId },
+    include: {
+      plan: {
+        include: {
+          planFeatures: {
+            include: { feature: true }
+          }
+        }
+      }
+    }
+  });
+
+  if (!subscription) return;
+
+  const currentPeriodStart = subscription.currentPeriodStart || new Date();
+  const currentPeriodEnd = subscription.currentPeriodEnd || new Date();
+
+  // Get usage for all features
+  const usageRecords = await prisma.usageRecord.findMany({
+    where: {
+      subscriptionId,
+      recordedAt: {
+        gte: currentPeriodStart,
+        lte: currentPeriodEnd
+      }
+    },
+    include: {
+      feature: true
+    }
+  });
+
+  // Group by feature and calculate totals
+  const featureUsage = usageRecords.reduce((acc, record) => {
+    if (!acc[record.featureId]) {
+      acc[record.featureId] = {
+        feature: record.feature,
+        totalUsage: 0
+      };
+    }
+    acc[record.featureId].totalUsage += record.quantity;
+    return acc;
+  }, {} as Record<string, { feature: any; totalUsage: number }>);
+
+  // Report usage to Stripe and check limits
+  for (const [featureId, usage] of Object.entries(featureUsage)) {
+    const feature = subscription.plan.planFeatures.find(pf => pf.feature.id === featureId)?.feature;
+    if (!feature) continue;
+
+    if (feature.usageLimit) {
+      const usagePercent = (usage.totalUsage / feature.usageLimit) * 100;
+      await sendUsageNotification(subscriptionId, featureId, usagePercent);
+    }
+
+    if (subscription.stripeSubscriptionId) {
+      await reportUsageToStripe(subscription, featureId, usage.totalUsage);
+    }
+  }
 }
 
 /**
@@ -519,4 +638,4 @@ export async function getUsageStats(featureId?: string, startDate?: Date, endDat
 
 // Example usage:
 // await trackUsage({ featureId: 'api-calls', quantity: 1 });
-// const stats = await getUsageStats('api-calls', new Date('2024-01-01'), new Date()); 
+// const stats = await getUsageStats('api-calls', new Date('2024-01-01'), new Date());

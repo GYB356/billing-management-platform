@@ -41,6 +41,7 @@ async function checkDeliveryPermission(deliveryId: string, userId: string, isAdm
   return { delivery, hasPermission: !!userOrg };
 }
 
+// POST - Retry a failed webhook delivery
 export async function POST(
   request: NextRequest,
   { params }: { params: { id: string } }
@@ -52,42 +53,59 @@ export async function POST(
       return new NextResponse('Unauthorized', { status: 401 });
     }
 
-    // Check permissions
-    const { delivery, hasPermission } = await checkDeliveryPermission(
-      params.id,
-      session.user.id,
-      session.user.role === 'ADMIN'
-    );
-    
+    // Get the webhook delivery and check permissions
+    const delivery = await prisma.webhookDelivery.findUnique({
+      where: { id: params.id },
+      include: { webhookEndpoint: true }
+    });
+
     if (!delivery) {
       return new NextResponse('Webhook delivery not found', { status: 404 });
     }
-    
-    if (!hasPermission) {
-      return new NextResponse('Access denied', { status: 403 });
+
+    // Check if user has access to the organization that owns the webhook
+    if (session.user.role !== 'ADMIN') {
+      const userOrg = await prisma.userOrganization.findFirst({
+        where: {
+          userId: session.user.id,
+          organizationId: delivery.webhookEndpoint.organizationId,
+          role: {
+            in: ['OWNER', 'ADMIN'], // Only owners and admins can retry webhooks
+          },
+        },
+      });
+
+      if (!userOrg) {
+        return new NextResponse('Access denied', { status: 403 });
+      }
     }
-    
-    // Check if delivery is already successful
-    if (delivery.status === 'SUCCESS') {
-      return NextResponse.json(
-        { error: 'Cannot retry a successful webhook delivery' },
-        { status: 400 }
-      );
-    }
-    
-    // Retry webhook delivery
+
+    // Retry the webhook delivery
     const success = await WebhookService.retryWebhookDelivery(params.id);
-    
-    // Return result
-    return NextResponse.json({
-      id: delivery.id,
-      success,
-      message: success 
-        ? 'Webhook delivery retried successfully' 
-        : 'Webhook delivery retry failed',
-    });
+
+    return NextResponse.json({ success });
   } catch (error) {
     console.error('Error retrying webhook delivery:', error);
-    return new NextResponse('Internal Server Error', { status: 500 });
+    
+    if (error instanceof Error) {
+      if (error.message === 'Cannot retry successful webhook delivery') {
+        return NextResponse.json(
+          { error: error.message },
+          { status: 400 }
+        );
+      }
+      
+      if (error.message === 'Cannot retry delivery to an inactive webhook endpoint') {
+        return NextResponse.json(
+          { error: error.message },
+          { status: 400 }
+        );
+      }
+    }
+
+    return NextResponse.json(
+      { error: 'Failed to retry webhook delivery' },
+      { status: 500 }
+    );
   }
-} 
+}

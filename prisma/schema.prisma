@@ -657,17 +657,16 @@ enum PaymentStatus {
 
 // Translation model for storing internationalization content
 model Translation {
-  id              String       @id @default(uuid())
-  locale          String
-  namespace       String       // e.g., "email", "invoice", "dashboard"
-  key             String
-  value           String       @db.Text
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
+  id        String   @id @default(cuid())
+  key       String
+  value     String
+  namespace String
+  locale    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  @@unique([locale, namespace, key])
-  @@index([locale])
-  @@index([namespace])
+  @@unique([key, locale, namespace])
+  @@index([namespace, locale])
 }
 
 // User preferences model for storing user-specific settings

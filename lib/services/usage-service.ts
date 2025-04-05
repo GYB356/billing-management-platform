@@ -1,354 +1,506 @@
-import prisma from '@/lib/prisma';
+import { prisma } from '@/lib/prisma';
+import { MeteringType, UsageStatus, AggregationType } from '@prisma/client';
 import { createEvent } from '../events';
 
-export interface RecordUsageParams {
+interface UsageEvent {
   subscriptionId: string;
-  featureId: string;
-  quantity: number;
+  metricId: string;
+  value: number;
   timestamp?: Date;
   metadata?: Record<string, any>;
 }
 
-/**
- * Records usage for a subscription's feature
- */
-export async function recordUsage(params: RecordUsageParams) {
-  const { subscriptionId, featureId, quantity, timestamp = new Date(), metadata } = params;
-
-  if (quantity <= 0) {
-    throw new Error('Usage quantity must be positive');
-  }
-
-  // Check if the subscription exists
-  const subscription = await prisma.subscription.findUnique({
-    where: { id: subscriptionId },
-    include: {
-      plan: {
-        include: {
-          planFeatures: {
-            where: { featureId },
-            include: { feature: true }
-          }
-        }
-      }
-    }
-  });
-
-  if (!subscription) {
-    throw new Error('Subscription not found');
-  }
-
-  if (subscription.status !== 'ACTIVE') {
-    throw new Error(`Cannot record usage for subscription with status: ${subscription.status}`);
-  }
-
-  // Check if the feature exists and is part of the subscription's plan
-  if (!subscription.plan || subscription.plan.planFeatures.length === 0) {
-    throw new Error('Feature not found in subscription plan');
-  }
-
-  // Create usage record
-  const usageRecord = await prisma.usageRecord.create({
-    data: {
-      subscriptionId,
-      featureId,
-      quantity,
-      timestamp,
-      metadata,
-    }
-  });
-
-  // Create event for usage record
-  await createEvent({
-    eventType: 'USAGE_RECORDED',
-    resourceType: 'SUBSCRIPTION',
-    resourceId: subscriptionId,
-    severity: 'INFO',
-    metadata: {
-      usageRecordId: usageRecord.id,
-      featureId,
-      quantity,
-      timestamp: timestamp.toISOString(),
-    }
-  });
-
-  return usageRecord;
-}
-
-/**
- * Gets the total usage for a subscription feature within a date range
- */
-export async function getFeatureUsage(
-  subscriptionId: string, 
-  featureId: string, 
-  startDate: Date, 
-  endDate: Date
-) {
-  // Check if the subscription exists
-  const subscription = await prisma.subscription.findUnique({
-    where: { id: subscriptionId }
-  });
-
-  if (!subscription) {
-    throw new Error('Subscription not found');
-  }
-
-  // Get the total usage for the feature within the date range
-  const result = await prisma.usageRecord.aggregate({
-    where: {
-      subscriptionId,
-      featureId,
-      timestamp: {
-        gte: startDate,
-        lte: endDate
-      }
-    },
-    _sum: {
-      quantity: true
-    }
-  });
-
-  return {
-    subscriptionId,
-    featureId,
-    startDate,
-    endDate,
-    totalUsage: result._sum.quantity || 0
+interface MeteringConfig {
+  type: MeteringType;
+  aggregation: AggregationType;
+  resetInterval?: 'hourly' | 'daily' | 'monthly' | 'yearly';
+  thresholds?: {
+    warning?: number;
+    critical?: number;
   };
 }
 
-/**
- * Gets usage records for a subscription within a date range
- */
-export async function getUsageRecords(
-  subscriptionId: string,
-  options?: {
-    featureId?: string;
-    startDate?: Date;
-    endDate?: Date;
-    limit?: number;
-    offset?: number;
-  }
-) {
-  const { featureId, startDate, endDate, limit = 100, offset = 0 } = options || {};
+export class UsageService {
+  /**
+   * Track a usage event
+   */
+  public async trackUsage(event: UsageEvent) {
+    const { subscriptionId, metricId, value, timestamp = new Date(), metadata = {} } = event;
 
-  // Build the where clause
-  const where: any = { subscriptionId };
-
-  if (featureId) {
-    where.featureId = featureId;
-  }
-
-  if (startDate || endDate) {
-    where.timestamp = {};
-    if (startDate) {
-      where.timestamp.gte = startDate;
-    }
-    if (endDate) {
-      where.timestamp.lte = endDate;
-    }
-  }
-
-  // Get the records and count
-  const [records, total] = await Promise.all([
-    prisma.usageRecord.findMany({
-      where,
-      orderBy: { timestamp: 'desc' },
-      take: limit,
-      skip: offset,
+    // Get metric configuration
+    const metric = await prisma.usageMetric.findUnique({
+      where: { id: metricId },
       include: {
-        feature: {
-          select: {
-            id: true,
-            name: true,
-            code: true,
-            unit: true
-          }
-        }
+        meteringConfig: true
       }
-    }),
-    prisma.usageRecord.count({ where })
-  ]);
+    });
 
-  return {
-    data: records,
-    meta: {
-      total,
-      limit,
-      offset
+    if (!metric) {
+      throw new Error('Usage metric not found');
     }
-  };
-}
 
-/**
- * Gets aggregated usage for all features of a subscription
- */
-export async function getSubscriptionUsageSummary(
-  subscriptionId: string,
-  startDate: Date,
-  endDate: Date
-) {
-  // Check if the subscription exists
-  const subscription = await prisma.subscription.findUnique({
-    where: { id: subscriptionId },
-    include: {
-      plan: {
-        include: {
-          planFeatures: {
-            include: {
-              feature: true
+    // Get subscription and plan
+    const subscription = await prisma.subscription.findUnique({
+      where: { id: subscriptionId },
+      include: {
+        plan: {
+          include: {
+            usageLimits: {
+              where: { metricId }
             }
           }
         }
       }
+    });
+
+    if (!subscription) {
+      throw new Error('Subscription not found');
     }
-  });
 
-  if (!subscription) {
-    throw new Error('Subscription not found');
-  }
-
-  if (!subscription.plan) {
-    throw new Error('Subscription plan not found');
-  }
-
-  // Get usage for each feature
-  const featureUsages = await Promise.all(
-    subscription.plan.planFeatures.map(async (planFeature) => {
-      const feature = planFeature.feature;
-      const usage = await getFeatureUsage(
+    // Record usage event
+    const usageEvent = await prisma.usageEvent.create({
+      data: {
         subscriptionId,
-        feature.id,
-        startDate,
-        endDate
-      );
-
-      return {
-        feature: {
-          id: feature.id,
-          name: feature.name,
-          code: feature.code,
-          unit: feature.unit
-        },
-        usage: usage.totalUsage
-      };
-    })
-  );
-
-  return {
-    subscriptionId,
-    planId: subscription.planId,
-    startDate,
-    endDate,
-    features: featureUsages
-  };
-}
-
-/**
- * Checks if a subscription has exceeded usage limits for any features
- */
-export async function checkUsageLimits(
-  subscriptionId: string,
-  startDate: Date,
-  endDate: Date
-) {
-  // Check if the subscription exists with its plan and limits
-  const subscription = await prisma.subscription.findUnique({
-    where: { id: subscriptionId },
-    include: {
-      plan: {
-        include: {
-          planFeatures: {
-            include: {
-              feature: true
-            }
-          }
-        }
+        metricId,
+        value,
+        timestamp,
+        metadata
       }
-    }
-  });
+    });
 
-  if (!subscription) {
-    throw new Error('Subscription not found');
-  }
-
-  if (!subscription.plan) {
-    throw new Error('Subscription plan not found');
-  }
-
-  // Check usage against limits for each feature
-  const featuresExceeded: Array<{
-    feature: {
-      id: string;
-      name: string;
-      code: string;
-    };
-    usage: number;
-    limit: number;
-    percentUsed: number;
-  }> = [];
-
-  for (const planFeature of subscription.plan.planFeatures) {
-    // Skip features without limits or if limits is not properly defined
-    const limitsData = planFeature.limits;
-    if (!limitsData) {
-      continue;
-    }
-    
-    // Parse the limits data
-    const limits = typeof limitsData === 'string' ? JSON.parse(limitsData) : limitsData;
-    if (!limits || !limits.maxValue || typeof limits.maxValue !== 'number') {
-      continue;
-    }
-
-    const feature = planFeature.feature;
-    
-    // Get the feature usage for the specified date range
-    const usage = await getFeatureUsage(
+    // Update aggregated usage
+    await this.updateAggregatedUsage(
       subscriptionId,
-      feature.id,
-      startDate,
-      endDate
+      metricId,
+      metric.meteringConfig,
+      timestamp
     );
 
-    // Check against the limit
-    if (usage.totalUsage > limits.maxValue) {
-      featuresExceeded.push({
-        feature: {
-          id: feature.id,
-          name: feature.name,
-          code: feature.code
-        },
-        usage: usage.totalUsage,
-        limit: limits.maxValue,
-        percentUsed: (usage.totalUsage / limits.maxValue) * 100
-      });
-      
-      // Create event for limit exceeded
-      await createEvent({
-        eventType: 'USAGE_LIMIT_EXCEEDED',
-        resourceType: 'SUBSCRIPTION',
-        resourceId: subscriptionId,
-        severity: 'WARNING',
-        metadata: {
-          featureId: feature.id,
-          featureName: feature.name,
-          usage: usage.totalUsage,
-          limit: limits.maxValue,
-          percentUsed: (usage.totalUsage / limits.maxValue) * 100
+    // Check usage limits
+    await this.checkUsageLimits(subscription, metric, timestamp);
+
+    // Create event
+    await createEvent({
+      type: 'USAGE_TRACKED',
+      resourceType: 'SUBSCRIPTION',
+      resourceId: subscriptionId,
+      metadata: {
+        metricId,
+        value,
+        timestamp
+      }
+    });
+
+    return usageEvent;
+  }
+
+  /**
+   * Update aggregated usage based on metering configuration
+   */
+  private async updateAggregatedUsage(
+    subscriptionId: string,
+    metricId: string,
+    meteringConfig: MeteringConfig,
+    timestamp: Date
+  ) {
+    const { type, aggregation, resetInterval } = meteringConfig;
+
+    // Get time range for aggregation
+    const timeRange = this.getTimeRange(timestamp, resetInterval);
+
+    // Get usage events in time range
+    const events = await prisma.usageEvent.findMany({
+      where: {
+        subscriptionId,
+        metricId,
+        timestamp: {
+          gte: timeRange.start,
+          lte: timeRange.end
         }
-      });
+      }
+    });
+
+    // Calculate aggregated value
+    let aggregatedValue: number;
+    switch (aggregation) {
+      case 'SUM':
+        aggregatedValue = events.reduce((sum, event) => sum + event.value, 0);
+        break;
+      case 'MAX':
+        aggregatedValue = Math.max(...events.map(event => event.value));
+        break;
+      case 'MIN':
+        aggregatedValue = Math.min(...events.map(event => event.value));
+        break;
+      case 'AVG':
+        aggregatedValue = events.reduce((sum, event) => sum + event.value, 0) / events.length;
+        break;
+      case 'LAST':
+        aggregatedValue = events[events.length - 1]?.value || 0;
+        break;
+      default:
+        throw new Error(`Unsupported aggregation type: ${aggregation}`);
+    }
+
+    // Update or create aggregated usage record
+    await prisma.aggregatedUsage.upsert({
+      where: {
+        subscriptionId_metricId_period: {
+          subscriptionId,
+          metricId,
+          period: timeRange.start.toISOString()
+        }
+      },
+      update: {
+        value: aggregatedValue,
+        lastUpdated: timestamp
+      },
+      create: {
+        subscriptionId,
+        metricId,
+        period: timeRange.start.toISOString(),
+        value: aggregatedValue,
+        lastUpdated: timestamp
+      }
+    });
+  }
+
+  /**
+   * Check usage against limits and trigger notifications
+   */
+  private async checkUsageLimits(
+    subscription: any,
+    metric: any,
+    timestamp: Date
+  ) {
+    const usageLimit = subscription.plan.usageLimits[0];
+    if (!usageLimit) {
+      return; // No limits defined
+    }
+
+    // Get current period usage
+    const timeRange = this.getTimeRange(timestamp, metric.meteringConfig.resetInterval);
+    const currentUsage = await prisma.aggregatedUsage.findFirst({
+      where: {
+        subscriptionId: subscription.id,
+        metricId: metric.id,
+        period: timeRange.start.toISOString()
+      }
+    });
+
+    if (!currentUsage) {
+      return;
+    }
+
+    const usagePercentage = (currentUsage.value / usageLimit.limit) * 100;
+
+    // Check thresholds
+    if (metric.meteringConfig.thresholds) {
+      const { warning, critical } = metric.meteringConfig.thresholds;
+
+      if (critical && usagePercentage >= critical) {
+        await this.handleCriticalUsage(subscription, metric, currentUsage);
+      } else if (warning && usagePercentage >= warning) {
+        await this.handleWarningUsage(subscription, metric, currentUsage);
+      }
+    }
+
+    // Check if usage exceeds limit
+    if (usageLimit.limit && currentUsage.value > usageLimit.limit) {
+      await this.handleExceededUsage(subscription, metric, currentUsage);
     }
   }
 
-  return {
-    subscriptionId,
-    planId: subscription.planId,
-    billingPeriod: {
-      start: startDate,
-      end: endDate
-    },
-    hasExceededLimits: featuresExceeded.length > 0,
-    featuresExceeded
-  };
-} 
+  /**
+   * Handle warning level usage
+   */
+  private async handleWarningUsage(
+    subscription: any,
+    metric: any,
+    usage: any
+  ) {
+    // Create notification
+    await prisma.notification.create({
+      data: {
+        type: 'USAGE_WARNING',
+        title: 'Usage Warning',
+        message: `Usage for ${metric.name} has reached warning threshold`,
+        userId: subscription.organizationId,
+        data: {
+          subscriptionId: subscription.id,
+          metricId: metric.id,
+          currentUsage: usage.value,
+          limit: subscription.plan.usageLimits[0].limit
+        },
+        priority: 'medium'
+      }
+    });
+
+    // Create event
+    await createEvent({
+      type: 'USAGE_WARNING',
+      resourceType: 'SUBSCRIPTION',
+      resourceId: subscription.id,
+      severity: 'WARNING',
+      metadata: {
+        metricId: metric.id,
+        currentUsage: usage.value,
+        limit: subscription.plan.usageLimits[0].limit
+      }
+    });
+  }
+
+  /**
+   * Handle critical level usage
+   */
+  private async handleCriticalUsage(
+    subscription: any,
+    metric: any,
+    usage: any
+  ) {
+    // Create notification
+    await prisma.notification.create({
+      data: {
+        type: 'USAGE_CRITICAL',
+        title: 'Critical Usage Alert',
+        message: `Usage for ${metric.name} has reached critical threshold`,
+        userId: subscription.organizationId,
+        data: {
+          subscriptionId: subscription.id,
+          metricId: metric.id,
+          currentUsage: usage.value,
+          limit: subscription.plan.usageLimits[0].limit
+        },
+        priority: 'high'
+      }
+    });
+
+    // Create event
+    await createEvent({
+      type: 'USAGE_CRITICAL',
+      resourceType: 'SUBSCRIPTION',
+      resourceId: subscription.id,
+      severity: 'HIGH',
+      metadata: {
+        metricId: metric.id,
+        currentUsage: usage.value,
+        limit: subscription.plan.usageLimits[0].limit
+      }
+    });
+  }
+
+  /**
+   * Handle exceeded usage
+   */
+  private async handleExceededUsage(
+    subscription: any,
+    metric: any,
+    usage: any
+  ) {
+    // Update usage status
+    await prisma.subscription.update({
+      where: { id: subscription.id },
+      data: {
+        usageStatus: UsageStatus.EXCEEDED
+      }
+    });
+
+    // Create notification
+    await prisma.notification.create({
+      data: {
+        type: 'USAGE_EXCEEDED',
+        title: 'Usage Limit Exceeded',
+        message: `Usage limit for ${metric.name} has been exceeded`,
+        userId: subscription.organizationId,
+        data: {
+          subscriptionId: subscription.id,
+          metricId: metric.id,
+          currentUsage: usage.value,
+          limit: subscription.plan.usageLimits[0].limit
+        },
+        priority: 'high'
+      }
+    });
+
+    // Create event
+    await createEvent({
+      type: 'USAGE_EXCEEDED',
+      resourceType: 'SUBSCRIPTION',
+      resourceId: subscription.id,
+      severity: 'HIGH',
+      metadata: {
+        metricId: metric.id,
+        currentUsage: usage.value,
+        limit: subscription.plan.usageLimits[0].limit
+      }
+    });
+  }
+
+  /**
+   * Get usage statistics
+   */
+  public async getUsageStats(
+    subscriptionId: string,
+    metricId: string,
+    startDate: Date,
+    endDate: Date
+  ) {
+    const usage = await prisma.usageEvent.findMany({
+      where: {
+        subscriptionId,
+        metricId,
+        timestamp: {
+          gte: startDate,
+          lte: endDate
+        }
+      },
+      orderBy: {
+        timestamp: 'asc'
+      }
+    });
+
+    const aggregatedUsage = await prisma.aggregatedUsage.findMany({
+      where: {
+        subscriptionId,
+        metricId,
+        period: {
+          gte: startDate.toISOString(),
+          lte: endDate.toISOString()
+        }
+      },
+      orderBy: {
+        period: 'asc'
+      }
+    });
+
+    return {
+      rawUsage: usage,
+      aggregatedUsage,
+      total: usage.reduce((sum, event) => sum + event.value, 0),
+      average: usage.length > 0
+        ? usage.reduce((sum, event) => sum + event.value, 0) / usage.length
+        : 0,
+      max: usage.length > 0
+        ? Math.max(...usage.map(event => event.value))
+        : 0,
+      min: usage.length > 0
+        ? Math.min(...usage.map(event => event.value))
+        : 0
+    };
+  }
+
+  /**
+   * Calculate billable usage
+   */
+  public async calculateBillableUsage(
+    subscriptionId: string,
+    billingPeriodStart: Date,
+    billingPeriodEnd: Date
+  ) {
+    const subscription = await prisma.subscription.findUnique({
+      where: { id: subscriptionId },
+      include: {
+        plan: {
+          include: {
+            usagePricing: {
+              include: {
+                metric: true,
+                tiers: true
+              }
+            }
+          }
+        }
+      }
+    });
+
+    if (!subscription) {
+      throw new Error('Subscription not found');
+    }
+
+    const billableUsage = [];
+
+    for (const pricing of subscription.plan.usagePricing) {
+      // Get aggregated usage for the metric
+      const usage = await prisma.aggregatedUsage.findMany({
+        where: {
+          subscriptionId,
+          metricId: pricing.metric.id,
+          period: {
+            gte: billingPeriodStart.toISOString(),
+            lte: billingPeriodEnd.toISOString()
+          }
+        }
+      });
+
+      // Calculate total usage
+      const totalUsage = usage.reduce((sum, record) => sum + record.value, 0);
+
+      // Calculate cost based on pricing tiers
+      let cost = 0;
+      let remainingUsage = totalUsage;
+
+      // Sort tiers by start amount
+      const sortedTiers = pricing.tiers.sort((a, b) => a.startAmount - b.startAmount);
+
+      for (const tier of sortedTiers) {
+        if (remainingUsage <= 0) break;
+
+        const tierUsage = Math.min(
+          remainingUsage,
+          tier.endAmount ? tier.endAmount - tier.startAmount : remainingUsage
+        );
+
+        cost += tierUsage * tier.unitPrice;
+        remainingUsage -= tierUsage;
+      }
+
+      billableUsage.push({
+        metricId: pricing.metric.id,
+        metricName: pricing.metric.name,
+        totalUsage,
+        cost,
+        usage
+      });
+    }
+
+    return billableUsage;
+  }
+
+  /**
+   * Get time range based on reset interval
+   */
+  private getTimeRange(date: Date, interval?: string) {
+    const start = new Date(date);
+    const end = new Date(date);
+
+    switch (interval) {
+      case 'hourly':
+        start.setMinutes(0, 0, 0);
+        end.setMinutes(59, 59, 999);
+        break;
+      case 'daily':
+        start.setHours(0, 0, 0, 0);
+        end.setHours(23, 59, 59, 999);
+        break;
+      case 'monthly':
+        start.setDate(1);
+        start.setHours(0, 0, 0, 0);
+        end.setMonth(end.getMonth() + 1);
+        end.setDate(0);
+        end.setHours(23, 59, 59, 999);
+        break;
+      case 'yearly':
+        start.setMonth(0, 1);
+        start.setHours(0, 0, 0, 0);
+        end.setMonth(11, 31);
+        end.setHours(23, 59, 59, 999);
+        break;
+      default:
+        // If no interval, use all time
+        start.setFullYear(1970);
+        end.setFullYear(9999);
+    }
+
+    return { start, end };
+  }
+}

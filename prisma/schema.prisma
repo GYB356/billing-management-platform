@@ -20,6 +20,7 @@ model User {
   twoFactorSecret     String?
   backupCodes         String[]           @default([])
   lastLoginAt         DateTime?
+  lastPasswordChange  DateTime?
   failedLoginAttempts Int                @default(0)
   lockedUntil         DateTime?
   createdAt           DateTime           @default(now())
@@ -36,6 +37,7 @@ model User {
   communicationPrefs  CommunicationPrefs?
   invoices            Invoice[]
   subscriptions       Subscription[]
+  dataPrivacyRequests DataPrivacyRequest[]
 
   @@index([email])
   @@map("users")
@@ -1195,4 +1197,69 @@ model ScheduledEmail {
   @@index([organizationId])
   @@index([scheduledFor])
   @@map("scheduled_emails")
+}
+
+enum SecurityEventSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum DataPrivacyRequestType {
+  ACCESS
+  DELETE
+  MODIFY
+}
+
+enum DataPrivacyRegulation {
+  GDPR
+  CCPA
+}
+
+enum SecurityAlertStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  DISMISSED
+}
+
+model SecurityEvent {
+  id        String              @id @default(cuid())
+  type      String
+  severity  SecurityEventSeverity
+  metadata  Json
+  timestamp DateTime            @default(now())
+}
+
+model SecurityAlert {
+  id        String              @id @default(cuid())
+  type      String
+  severity  SecurityEventSeverity
+  message   String
+  metadata  Json
+  status    SecurityAlertStatus @default(OPEN)
+  timestamp DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+}
+
+model DataPrivacyRequest {
+  id         String               @id @default(cuid())
+  userId     String
+  type       DataPrivacyRequestType
+  regulation DataPrivacyRegulation
+  status     String              @default("PENDING")
+  metadata   Json                @default("{}")
+  createdAt  DateTime            @default(now())
+  updatedAt  DateTime            @updatedAt
+  user       User                @relation(fields: [userId], references: [id])
+}
+
+model BillingAuditLog {
+  id        String   @id @default(cuid())
+  userId    String
+  eventType String
+  metadata  Json
+  timestamp DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
 }

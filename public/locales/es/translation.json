@@ -1,0 +1,51 @@
+{
+  "formats": {
+    "title": "Preferencias de Formato",
+    "description": "Personalice cómo se muestran las fechas, números y monedas",
+    "date": {
+      "label": "Formato de Fecha",
+      "short": "Corto (DD/MM/AAAA)",
+      "long": "Largo (Día Mes Año)",
+      "numeric": "Numérico (AAAA-MM-DD)"
+    },
+    "number": {
+      "label": "Formato de Números",
+      "standard": "Estándar (1.234,56)",
+      "compact": "Compacto (1,2K)",
+      "scientific": "Científico (1,23e+3)"
+    },
+    "currency": {
+      "label": "Formato de Moneda",
+      "symbol": "Símbolo (1.234,56 €)",
+      "code": "Código (EUR 1.234,56)",
+      "name": "Nombre (1.234,56 Euros)"
+    },
+    "save": "Guardar Preferencias",
+    "saveSuccess": "Preferencias de formato guardadas con éxito"
+  },
+  "settings": {
+    "formats": {
+      "title": "Configuración de Formatos",
+      "description": "Personalice cómo se muestra la información"
+    }
+  },
+  "errors": {
+    "fetchPreferences": "Error al cargar las preferencias de formato",
+    "savePreferences": "Error al guardar las preferencias de formato"
+  },
+  "invoice": {
+    "title": "Factura Nº {{number}}",
+    "status": {
+      "paid": "Pagada",
+      "pending": "Pendiente",
+      "overdue": "Vencida"
+    },
+    "issueDate": "Fecha de Emisión",
+    "dueDate": "Fecha de Vencimiento",
+    "items": "Artículos",
+    "quantity": "Cantidad: {{count}}",
+    "subtotal": "Subtotal",
+    "tax": "Impuesto",
+    "total": "Total"
+  }
+} 

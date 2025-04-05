@@ -8,6 +8,8 @@ export default function SignIn() {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [twoFactorRequired, setTwoFactorRequired] = useState(false);
+  const [twoFactorToken, setTwoFactorToken] = useState('');
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -22,11 +24,16 @@ export default function SignIn() {
       const result = await signIn('credentials', {
         email,
         password,
+        twoFactorToken: twoFactorRequired ? twoFactorToken : undefined,
         redirect: false,
       });
 
       if (result?.error) {
-        setError('Invalid email or password');
+        if (result.error === 'Two-factor authentication required') {
+          setTwoFactorRequired(true);
+        } else {
+          setError('Invalid email or password');
+        }
       } else {
         router.push('/dashboard');
         router.refresh();
@@ -77,6 +84,21 @@ export default function SignIn() {
                 required
                 className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-b-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 focus:z-10 sm:text-sm"
                 placeholder="Password"
+              />
+            </div>
+            <div>
+              <label htmlFor="twoFactorToken" className="sr-only">
+                Two-Factor Token
+              </label>
+              <input
+                id="twoFactorToken"
+                name="twoFactorToken"
+                type="text"
+                value={twoFactorToken}
+                onChange={(e) => setTwoFactorToken(e.target.value)}
+                required={twoFactorRequired}
+                className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 focus:z-10 sm:text-sm"
+                placeholder="Two-Factor Token"
               />
             </div>
           </div>

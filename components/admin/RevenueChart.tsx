@@ -1,27 +1,15 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useMemo } from 'react';
 import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
   Tooltip,
-  Legend,
-} from 'chart.js';
-import { Line } from 'react-chartjs-2';
-
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
-  Tooltip,
-  Legend
-);
+  ResponsiveContainer,
+} from 'recharts';
 
 interface Transaction {
   amount: number;
@@ -34,58 +22,37 @@ interface RevenueChartProps {
 }
 
 export default function RevenueChart({ transactions }: RevenueChartProps) {
-  const chartRef = useRef<ChartJS>(null);
+  const data = useMemo(() => {
+    const dailyRevenue = transactions.reduce((acc, transaction) => {
+      if (transaction.type === 'charge') {
+        const date = new Date(transaction.created * 1000).toLocaleDateString();
+        acc[date] = (acc[date] || 0) + transaction.amount / 100;
+      }
+      return acc;
+    }, {} as Record<string, number>);
 
-  // Process transactions to get daily revenue
-  const dailyRevenue = transactions.reduce((acc, transaction) => {
-    if (transaction.type === 'charge') {
-      const date = new Date(transaction.created * 1000).toLocaleDateString();
-      acc[date] = (acc[date] || 0) + transaction.amount / 100;
-    }
-    return acc;
-  }, {} as Record<string, number>);
-
-  // Sort dates and prepare data for chart
-  const sortedDates = Object.keys(dailyRevenue).sort();
-  const revenueData = sortedDates.map(date => dailyRevenue[date]);
-
-  const data = {
-    labels: sortedDates,
-    datasets: [
-      {
-        label: 'Daily Revenue',
-        data: revenueData,
-        borderColor: 'rgb(59, 130, 246)',
-        backgroundColor: 'rgba(59, 130, 246, 0.5)',
-        tension: 0.1,
-      },
-    ],
-  };
-
-  const options = {
-    responsive: true,
-    plugins: {
-      legend: {
-        position: 'top' as const,
-      },
-      title: {
-        display: true,
-        text: 'Revenue Over Time',
-      },
-    },
-    scales: {
-      y: {
-        beginAtZero: true,
-        ticks: {
-          callback: (value: number) => `$${value.toFixed(2)}`,
-        },
-      },
-    },
-  };
+    return Object.entries(dailyRevenue)
+      .map(([date, amount]) => ({ date, amount }))
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  }, [transactions]);
 
   return (
     <div className="h-[300px]">
-      <Line ref={chartRef} data={data} options={options} />
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={data}>
+          <CartesianGrid strokeDasharray="3 3" />
+          <XAxis dataKey="date" />
+          <YAxis />
+          <Tooltip />
+          <Line
+            type="monotone"
+            dataKey="amount"
+            stroke="#8884d8"
+            strokeWidth={2}
+            dot={false}
+          />
+        </LineChart>
+      </ResponsiveContainer>
     </div>
   );
 } 

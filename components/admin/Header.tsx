@@ -2,6 +2,7 @@ import { Fragment } from 'react';
 import { Menu, Transition } from '@headlessui/react';
 import { BellIcon, UserCircleIcon } from '@heroicons/react/24/outline';
 import { signOut } from 'next-auth/react';
+import { LanguageSelector } from '@/components/i18n/LanguageSelector';
 
 export default function AdminHeader() {
   return (
@@ -23,6 +24,11 @@ export default function AdminHeader() {
               <span className="sr-only">View notifications</span>
               <BellIcon className="h-6 w-6" aria-hidden="true" />
             </button>
+
+            {/* Language selector */}
+            <div className="ml-3">
+              <LanguageSelector variant="icon" />
+            </div>
 
             {/* Profile dropdown */}
             <Menu as="div" className="ml-3 relative">

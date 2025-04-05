@@ -1,0 +1,21 @@
+// This file is disabled to allow Next.js to use SWC by default
+// For Jest tests, you can still reference this file explicitly
+
+module.exports = {
+  presets: [
+    ['@babel/preset-env', { targets: { node: 'current' } }],
+    '@babel/preset-typescript',
+    ['@babel/preset-react', { runtime: 'automatic' }],
+  ],
+  plugins: [
+    [
+      'module-resolver',
+      {
+        root: ['./'],
+        alias: {
+          '@': './',
+        },
+      },
+    ],
+  ],
+}; 

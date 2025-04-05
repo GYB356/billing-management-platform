@@ -1,3 +1,16 @@
+<<<<<<< HEAD
+import NextAuth from "next-auth";
+import GoogleProvider from "next-auth/providers/google";
+import CredentialsProvider from "next-auth/providers/credentials";
+import { PrismaAdapter } from "@auth/prisma-adapter";
+import { PrismaClient } from "@prisma/client";
+import bcrypt from "bcryptjs";
+import { authOptions } from '@/lib/auth';
+
+const prisma = new PrismaClient();
+
+const handler = NextAuth(authOptions);
+=======
 import NextAuth from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
 import { PrismaClient } from '@prisma/client';
@@ -49,5 +62,6 @@ const handler = NextAuth({
     },
   },
 });
+>>>>>>> 58d4a3da7158e64e5700c51b28776197a8d974c9
 
 export { handler as GET, handler as POST };

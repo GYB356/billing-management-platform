@@ -1,0 +1,51 @@
+{
+  "formats": {
+    "title": "Ustawienia Formatowania",
+    "description": "Dostosuj sposób wyświetlania dat, liczb i walut",
+    "date": {
+      "label": "Format Daty",
+      "short": "Krótki (DD/MM/RRRR)",
+      "long": "Długi (Dzień Miesiąc Rok)",
+      "numeric": "Numeryczny (RRRR-MM-DD)"
+    },
+    "number": {
+      "label": "Format Liczby",
+      "standard": "Standardowy (1 234,56)",
+      "compact": "Kompaktowy (1,2K)",
+      "scientific": "Naukowy (1,23e+3)"
+    },
+    "currency": {
+      "label": "Format Waluty",
+      "symbol": "Symbol (1 234,56 zł)",
+      "code": "Kod (PLN 1 234,56)",
+      "name": "Nazwa (1 234,56 złotych)"
+    },
+    "save": "Zapisz Ustawienia",
+    "saveSuccess": "Ustawienia formatowania zostały zapisane"
+  },
+  "settings": {
+    "formats": {
+      "title": "Ustawienia Formatowania",
+      "description": "Dostosuj sposób wyświetlania informacji"
+    }
+  },
+  "errors": {
+    "fetchPreferences": "Nie udało się załadować ustawień formatowania",
+    "savePreferences": "Nie udało się zapisać ustawień formatowania"
+  },
+  "invoice": {
+    "title": "Faktura Nr {{number}}",
+    "status": {
+      "paid": "Opłacona",
+      "pending": "Oczekująca",
+      "overdue": "Przeterminowana"
+    },
+    "issueDate": "Data Wystawienia",
+    "dueDate": "Data Płatności",
+    "items": "Pozycje",
+    "quantity": "Ilość: {{count}}",
+    "subtotal": "Suma Częściowa",
+    "tax": "Podatek",
+    "total": "Suma"
+  }
+}

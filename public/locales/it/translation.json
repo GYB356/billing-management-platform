@@ -1,0 +1,51 @@
+{
+  "formats": {
+    "title": "Impostazioni Formato",
+    "description": "Personalizza come vengono visualizzati date, numeri e valute",
+    "date": {
+      "label": "Formato Data",
+      "short": "Breve (GG/MM/AAAA)",
+      "long": "Lungo (Giorno Mese Anno)",
+      "numeric": "Numerico (AAAA-MM-GG)"
+    },
+    "number": {
+      "label": "Formato Numeri",
+      "standard": "Standard (1.234,56)",
+      "compact": "Compatto (1,2K)",
+      "scientific": "Scientifico (1,23e+3)"
+    },
+    "currency": {
+      "label": "Formato Valuta",
+      "symbol": "Simbolo (€ 1.234,56)",
+      "code": "Codice (EUR 1.234,56)",
+      "name": "Nome (1.234,56 euro)"
+    },
+    "save": "Salva Impostazioni",
+    "saveSuccess": "Impostazioni formato salvate con successo"
+  },
+  "settings": {
+    "formats": {
+      "title": "Impostazioni Formato",
+      "description": "Personalizza come vengono visualizzate le informazioni"
+    }
+  },
+  "errors": {
+    "fetchPreferences": "Impossibile caricare le impostazioni formato",
+    "savePreferences": "Impossibile salvare le impostazioni formato"
+  },
+  "invoice": {
+    "title": "Fattura N° {{number}}",
+    "status": {
+      "paid": "Pagato",
+      "pending": "In attesa",
+      "overdue": "Scaduto"
+    },
+    "issueDate": "Data Emissione",
+    "dueDate": "Data Scadenza",
+    "items": "Articoli",
+    "quantity": "Quantità: {{count}}",
+    "subtotal": "Subtotale",
+    "tax": "Imposta",
+    "total": "Totale"
+  }
+} 

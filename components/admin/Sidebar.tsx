@@ -8,6 +8,7 @@ import {
   CogIcon,
   DocumentTextIcon,
   ChartPieIcon,
+  GlobeAltIcon,
 } from '@heroicons/react/24/outline';
 
 const navigation = [
@@ -17,6 +18,7 @@ const navigation = [
   { name: 'Usage', href: '/admin/usage', icon: ChartPieIcon },
   { name: 'Notifications', href: '/admin/notifications', icon: BellIcon },
   { name: 'Reports', href: '/admin/reports', icon: DocumentTextIcon },
+  { name: 'Translations', href: '/admin/translations', icon: GlobeAltIcon },
   { name: 'Settings', href: '/admin/settings', icon: CogIcon },
 ];
 

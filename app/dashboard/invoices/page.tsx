@@ -1,263 +1,235 @@
 'use client';
 
-import { Fragment, useEffect, useState } from 'react';
-import { Dialog, Transition } from '@headlessui/react';
-import { XMarkIcon } from '@heroicons/react/24/outline';
-import { useAuth } from '@/hooks/useAuth';
+import { useState, useEffect } from 'react';
+import { useSession } from 'next-auth/react';
+import { formatDate, formatCurrency } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Select } from '@/components/ui/select';
+import { Card } from '@/components/ui/card';
+import { Table } from '@/components/ui/table';
+import { DateRangePicker } from '@/components/ui/date-range-picker';
+import { DownloadIcon, FilterIcon, SearchIcon } from 'lucide-react';
 
 interface Invoice {
   id: string;
-  amount: number;
+  invoiceNumber: string;
+  createdAt: string;
+  dueDate: string;
   status: string;
-  created: Date;
-  pdfUrl: string;
+  totalAmount: number;
+  currency: string;
+  items: Array<{
+    description: string;
+    amount: number;
+    quantity: number;
+    unitPrice: number;
+  }>;
 }
 
-export default function InvoicesPage() {
-  const { user } = useAuth();
+interface Pagination {
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
+export default function InvoiceHistoryPage() {
+  const { data: session } = useSession();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [pagination, setPagination] = useState<Pagination>({
+    total: 0,
+    page: 1,
+    limit: 10,
+    totalPages: 0
+  });
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [filters, setFilters] = useState({
+    search: '',
+    status: '',
+    dateRange: {
+      start: null,
+      end: null
+    },
+    currency: ''
+  });
 
   useEffect(() => {
     fetchInvoices();
-  }, []);
+  }, [filters, pagination.page]);
 
   const fetchInvoices = async () => {
     try {
-      const response = await fetch('/api/stripe/invoices');
+      setLoading(true);
+      const queryParams = new URLSearchParams();
+      
+      if (filters.search) queryParams.append('search', filters.search);
+      if (filters.status) queryParams.append('status', filters.status);
+      if (filters.dateRange.start) queryParams.append('startDate', filters.dateRange.start);
+      if (filters.dateRange.end) queryParams.append('endDate', filters.dateRange.end);
+      if (filters.currency) queryParams.append('currency', filters.currency);
+      queryParams.append('page', pagination.page.toString());
+      queryParams.append('limit', pagination.limit.toString());
+
+      const response = await fetch(`/api/invoices?${queryParams.toString()}`);
+      if (!response.ok) throw new Error('Failed to fetch invoices');
+      
       const data = await response.json();
-
-      if (data.error) {
-        throw new Error(data.error);
-      }
-
       setInvoices(data.invoices);
-    } catch (error) {
-      console.error('Error fetching invoices:', error);
-      setError('Failed to load invoices');
+      setPagination(data.pagination);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
   };
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
-      </div>
-    );
-  }
+  const handleExport = async () => {
+    try {
+      const queryParams = new URLSearchParams();
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value) queryParams.append(key, JSON.stringify(value));
+      });
 
-  if (error) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-red-600">{error}</div>
-      </div>
-    );
-  }
+      const response = await fetch(`/api/invoices/export?${queryParams.toString()}`);
+      if (!response.ok) throw new Error('Failed to export invoices');
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `invoices-${formatDate(new Date(), 'short')}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to export invoices');
+    }
+  };
+
+  if (loading) return <div>Loading...</div>;
+  if (error) return <div>Error: {error}</div>;
 
   return (
-    <div className="px-4 sm:px-6 lg:px-8">
-      <div className="sm:flex sm:items-center">
-        <div className="sm:flex-auto">
-          <h1 className="text-2xl font-semibold text-gray-900">Invoices</h1>
-          <p className="mt-2 text-sm text-gray-700">
-            A list of all your invoices and their current status.
-          </p>
-        </div>
+    <div className="container mx-auto py-8">
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-2xl font-bold">Invoice History</h1>
+        <Button onClick={handleExport} variant="outline">
+          <DownloadIcon className="w-4 h-4 mr-2" />
+          Export
+        </Button>
       </div>
 
-      <div className="mt-8 flow-root">
-        <div className="-mx-4 -my-2 overflow-x-auto sm:-mx-6 lg:-mx-8">
-          <div className="inline-block min-w-full py-2 align-middle sm:px-6 lg:px-8">
-            <div className="overflow-hidden shadow ring-1 ring-black ring-opacity-5 sm:rounded-lg">
-              <table className="min-w-full divide-y divide-gray-300">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th
-                      scope="col"
-                      className="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-gray-900 sm:pl-6"
-                    >
-                      Invoice ID
-                    </th>
-                    <th
-                      scope="col"
-                      className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900"
-                    >
-                      Amount
-                    </th>
-                    <th
-                      scope="col"
-                      className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900"
-                    >
-                      Status
-                    </th>
-                    <th
-                      scope="col"
-                      className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900"
-                    >
-                      Date
-                    </th>
-                    <th scope="col" className="relative py-3.5 pl-3 pr-4 sm:pr-6">
-                      <span className="sr-only">Actions</span>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200 bg-white">
-                  {invoices.map(invoice => (
-                    <tr key={invoice.id}>
-                      <td className="whitespace-nowrap py-4 pl-4 pr-3 text-sm font-medium text-gray-900 sm:pl-6">
-                        {invoice.id}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
-                        ${invoice.amount.toFixed(2)}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-4 text-sm">
-                        <span
-                          className={`inline-flex rounded-full px-2 text-xs font-semibold leading-5 ${
-                            invoice.status === 'paid'
-                              ? 'bg-green-100 text-green-800'
-                              : 'bg-yellow-100 text-yellow-800'
-                          }`}
-                        >
-                          {invoice.status}
-                        </span>
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
-                        {new Date(invoice.created).toLocaleDateString()}
-                      </td>
-                      <td className="relative whitespace-nowrap py-4 pl-3 pr-4 text-right text-sm font-medium sm:pr-6">
-                        <button
-                          onClick={() => {
-                            setSelectedInvoice(invoice);
-                            setIsModalOpen(true);
-                          }}
-                          className="text-indigo-600 hover:text-indigo-900 mr-4"
-                        >
-                          View Details
-                        </button>
-                        <a
-                          href={invoice.pdfUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-indigo-600 hover:text-indigo-900"
-                        >
-                          Download PDF
-                        </a>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+      <Card className="p-4 mb-6">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="relative">
+            <SearchIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+            <Input
+              placeholder="Search invoices..."
+              value={filters.search}
+              onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+              className="pl-10"
+            />
           </div>
-        </div>
-      </div>
 
-      <Transition.Root show={isModalOpen} as={Fragment}>
-        <Dialog as="div" className="relative z-10" onClose={setIsModalOpen}>
-          <Transition.Child
-            as={Fragment}
-            enter="ease-out duration-300"
-            enterFrom="opacity-0"
-            enterTo="opacity-100"
-            leave="ease-in duration-200"
-            leaveFrom="opacity-100"
-            leaveTo="opacity-0"
+          <Select
+            value={filters.status}
+            onValueChange={(value) => setFilters({ ...filters, status: value })}
           >
-            <div className="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" />
-          </Transition.Child>
+            <option value="">All Statuses</option>
+            <option value="PENDING">Pending</option>
+            <option value="PAID">Paid</option>
+            <option value="OVERDUE">Overdue</option>
+            <option value="CANCELLED">Cancelled</option>
+          </Select>
 
-          <div className="fixed inset-0 z-10 overflow-y-auto">
-            <div className="flex min-h-full items-end justify-center p-4 text-center sm:items-center sm:p-0">
-              <Transition.Child
-                as={Fragment}
-                enter="ease-out duration-300"
-                enterFrom="opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95"
-                enterTo="opacity-100 translate-y-0 sm:scale-100"
-                leave="ease-in duration-200"
-                leaveFrom="opacity-100 translate-y-0 sm:scale-100"
-                leaveTo="opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95"
-              >
-                <Dialog.Panel className="relative transform overflow-hidden rounded-lg bg-white px-4 pb-4 pt-5 text-left shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg sm:p-6">
-                  <div className="absolute right-0 top-0 pr-4 pt-4">
-                    <button
-                      type="button"
-                      className="rounded-md bg-white text-gray-400 hover:text-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
-                      onClick={() => setIsModalOpen(false)}
-                    >
-                      <span className="sr-only">Close</span>
-                      <XMarkIcon className="h-6 w-6" aria-hidden="true" />
-                    </button>
-                  </div>
-                  {selectedInvoice && (
-                    <div className="sm:flex sm:items-start">
-                      <div className="mt-3 text-center sm:mt-0 sm:text-left w-full">
-                        <Dialog.Title
-                          as="h3"
-                          className="text-base font-semibold leading-6 text-gray-900"
-                        >
-                          Invoice Details
-                        </Dialog.Title>
-                        <div className="mt-4 space-y-4">
-                          <div>
-                            <h4 className="text-sm font-medium text-gray-500">Invoice ID</h4>
-                            <p className="mt-1 text-sm text-gray-900">{selectedInvoice.id}</p>
-                          </div>
-                          <div>
-                            <h4 className="text-sm font-medium text-gray-500">Amount</h4>
-                            <p className="mt-1 text-sm text-gray-900">
-                              ${selectedInvoice.amount.toFixed(2)}
-                            </p>
-                          </div>
-                          <div>
-                            <h4 className="text-sm font-medium text-gray-500">Status</h4>
-                            <span
-                              className={`mt-1 inline-flex rounded-full px-2 text-xs font-semibold leading-5 ${
-                                selectedInvoice.status === 'paid'
-                                  ? 'bg-green-100 text-green-800'
-                                  : 'bg-yellow-100 text-yellow-800'
-                              }`}
-                            >
-                              {selectedInvoice.status}
-                            </span>
-                          </div>
-                          <div>
-                            <h4 className="text-sm font-medium text-gray-500">Date</h4>
-                            <p className="mt-1 text-sm text-gray-900">
-                              {new Date(selectedInvoice.created).toLocaleDateString()}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="mt-5 sm:mt-4 sm:flex sm:flex-row-reverse">
-                          <a
-                            href={selectedInvoice.pdfUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex w-full justify-center rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 sm:ml-3 sm:w-auto"
-                          >
-                            Download PDF
-                          </a>
-                          <button
-                            type="button"
-                            className="mt-3 inline-flex w-full justify-center rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50 sm:mt-0 sm:w-auto"
-                            onClick={() => setIsModalOpen(false)}
-                          >
-                            Close
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </Dialog.Panel>
-              </Transition.Child>
-            </div>
+          <DateRangePicker
+            value={filters.dateRange}
+            onChange={(range) => setFilters({ ...filters, dateRange: range })}
+          />
+
+          <Select
+            value={filters.currency}
+            onValueChange={(value) => setFilters({ ...filters, currency: value })}
+          >
+            <option value="">All Currencies</option>
+            <option value="USD">USD</option>
+            <option value="EUR">EUR</option>
+            <option value="GBP">GBP</option>
+          </Select>
+        </div>
+      </Card>
+
+      <Card>
+        <Table>
+          <thead>
+            <tr>
+              <th>Invoice Number</th>
+              <th>Date</th>
+              <th>Due Date</th>
+              <th>Status</th>
+              <th>Amount</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {invoices.map((invoice) => (
+              <tr key={invoice.id}>
+                <td>{invoice.invoiceNumber}</td>
+                <td>{formatDate(invoice.createdAt)}</td>
+                <td>{formatDate(invoice.dueDate)}</td>
+                <td>
+                  <span className={`px-2 py-1 rounded-full text-xs ${
+                    invoice.status === 'PAID' ? 'bg-green-100 text-green-800' :
+                    invoice.status === 'PENDING' ? 'bg-yellow-100 text-yellow-800' :
+                    invoice.status === 'OVERDUE' ? 'bg-red-100 text-red-800' :
+                    'bg-gray-100 text-gray-800'
+                  }`}>
+                    {invoice.status}
+                  </span>
+                </td>
+                <td>{formatCurrency(invoice.totalAmount, invoice.currency)}</td>
+                <td>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => window.open(`/api/invoices/${invoice.id}/pdf`, '_blank')}
+                  >
+                    View PDF
+                  </Button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+
+        {/* Pagination */}
+        <div className="flex justify-between items-center p-4 border-t">
+          <div className="text-sm text-gray-500">
+            Showing {((pagination.page - 1) * pagination.limit) + 1} to {Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total} entries
           </div>
-        </Dialog>
-      </Transition.Root>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setPagination({ ...pagination, page: pagination.page - 1 })}
+              disabled={pagination.page === 1}
+            >
+              Previous
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setPagination({ ...pagination, page: pagination.page + 1 })}
+              disabled={pagination.page === pagination.totalPages}
+            >
+              Next
+            </Button>
+          </div>
+        </div>
+      </Card>
     </div>
   );
 } 

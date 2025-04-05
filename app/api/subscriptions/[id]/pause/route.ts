@@ -4,8 +4,6 @@ import { authOptions } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { SubscriptionService } from '@/lib/services/subscription-service';
 
-const subscriptionService = new SubscriptionService();
-
 export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
@@ -51,6 +49,9 @@ export async function POST(
         { status: 400 }
       );
     }
+
+    // Initialize the subscription service
+    const subscriptionService = new SubscriptionService();
 
     // Pause the subscription
     const result = await subscriptionService.pauseSubscription({

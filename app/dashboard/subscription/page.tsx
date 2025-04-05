@@ -3,6 +3,10 @@ import { authOptions } from '@/lib/auth';
 import { redirect } from 'next/navigation';
 import prisma from '@/lib/prisma';
 import SubscriptionManagementPanel from '@/components/subscription/SubscriptionManagementPanel';
+import { SubscriptionPauseDialog } from '@/components/subscription/SubscriptionPauseDialog';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { format } from 'date-fns';
 
 async function getSubscriptionData(userId: string) {
   try {
@@ -98,33 +102,87 @@ export default async function SubscriptionPage() {
   const subscription = await getSubscriptionData(session.user.id);
   const availablePlans = await getAvailablePlans();
 
+  if (!subscription) {
+    return (
+      <div className="container mx-auto py-8">
+        <h1 className="text-2xl font-bold mb-4">No Active Subscription</h1>
+        <p>You currently don't have an active subscription.</p>
+      </div>
+    );
+  }
+
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
+    <div className="container mx-auto py-8">
       <h1 className="text-2xl font-bold mb-6">Subscription Management</h1>
       
-      {subscription ? (
-        <SubscriptionManagementPanel 
-          subscription={subscription} 
-          availablePlans={availablePlans}
-        />
-      ) : (
-        <div className="bg-white shadow rounded-lg overflow-hidden">
-          <div className="px-4 py-5 sm:p-6">
-            <h3 className="text-lg font-medium text-gray-900">No active subscription</h3>
-            <div className="mt-3 text-sm text-gray-500">
-              <p>You don't have an active subscription yet.</p>
+      <Card>
+        <CardHeader>
+          <CardTitle>Current Subscription</CardTitle>
+          <CardDescription>
+            Manage your subscription settings and billing information
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="font-medium">{subscription.plan.name}</h3>
+              <p className="text-sm text-muted-foreground">
+                {subscription.plan.description}
+              </p>
             </div>
-            <div className="mt-5">
-              <a
-                href="/dashboard/subscription/checkout"
-                className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-              >
-                Choose a plan
-              </a>
-            </div>
+            <Badge variant={subscription.isPaused ? 'secondary' : 'default'}>
+              {subscription.isPaused ? 'Paused' : 'Active'}
+            </Badge>
           </div>
-        </div>
-      )}
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <p className="text-sm font-medium">Status</p>
+              <p className="text-sm text-muted-foreground capitalize">
+                {subscription.status}
+              </p>
+            </div>
+            <div>
+              <p className="text-sm font-medium">Billing Period</p>
+              <p className="text-sm text-muted-foreground">
+                {format(new Date(subscription.currentPeriodStart), 'MMM d, yyyy')} -{' '}
+                {format(new Date(subscription.currentPeriodEnd), 'MMM d, yyyy')}
+              </p>
+            </div>
+            {subscription.isPaused && (
+              <>
+                <div>
+                  <p className="text-sm font-medium">Paused Since</p>
+                  <p className="text-sm text-muted-foreground">
+                    {format(new Date(subscription.pausedAt!), 'MMM d, yyyy')}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium">Resumes On</p>
+                  <p className="text-sm text-muted-foreground">
+                    {format(new Date(subscription.resumesAt!), 'MMM d, yyyy')}
+                  </p>
+                </div>
+                {subscription.pauseReason && (
+                  <div className="col-span-2">
+                    <p className="text-sm font-medium">Pause Reason</p>
+                    <p className="text-sm text-muted-foreground">
+                      {subscription.pauseReason}
+                    </p>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          <div className="flex justify-end space-x-4">
+            <SubscriptionPauseDialog
+              subscriptionId={subscription.id}
+              isPaused={subscription.isPaused}
+            />
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 } 

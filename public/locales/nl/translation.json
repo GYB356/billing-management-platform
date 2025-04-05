@@ -1,0 +1,51 @@
+{
+  "formats": {
+    "title": "Opmaakinstellingen",
+    "description": "Pas aan hoe datums, getallen en valuta worden weergegeven",
+    "date": {
+      "label": "Datumformaat",
+      "short": "Kort (DD/MM/JJJJ)",
+      "long": "Lang (Dag Maand Jaar)",
+      "numeric": "Numeriek (JJJJ-MM-DD)"
+    },
+    "number": {
+      "label": "Getalformaat",
+      "standard": "Standaard (1.234,56)",
+      "compact": "Compact (1,2K)",
+      "scientific": "Wetenschappelijk (1,23e+3)"
+    },
+    "currency": {
+      "label": "Valutaformaat",
+      "symbol": "Symbool (€ 1.234,56)",
+      "code": "Code (EUR 1.234,56)",
+      "name": "Naam (1.234,56 euro)"
+    },
+    "save": "Instellingen Opslaan",
+    "saveSuccess": "Opmaakinstellingen succesvol opgeslagen"
+  },
+  "settings": {
+    "formats": {
+      "title": "Opmaakinstellingen",
+      "description": "Pas aan hoe informatie wordt weergegeven"
+    }
+  },
+  "errors": {
+    "fetchPreferences": "Kan opmaakinstellingen niet laden",
+    "savePreferences": "Kan opmaakinstellingen niet opslaan"
+  },
+  "invoice": {
+    "title": "Factuur Nr. {{number}}",
+    "status": {
+      "paid": "Betaald",
+      "pending": "In afwachting",
+      "overdue": "Verschuldigd"
+    },
+    "issueDate": "Uitgavedatum",
+    "dueDate": "Vervaldatum",
+    "items": "Artikelen",
+    "quantity": "Aantal: {{count}}",
+    "subtotal": "Subtotaal",
+    "tax": "Belasting",
+    "total": "Totaal"
+  }
+} 

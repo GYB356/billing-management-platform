@@ -1,12 +1,11 @@
-import { NextResponse } from 'next/server';
-import { SubscriptionService } from '../../../../../lib/services/subscription-service';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '../../../../../lib/auth';
-
-const subscriptionService = new SubscriptionService();
+import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '@/lib/auth';
+import prisma from '@/lib/prisma';
+import { SubscriptionService } from '@/lib/services/subscription-service';
 
 export async function POST(
-  request: Request,
+  req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
@@ -44,24 +43,30 @@ export async function POST(
     }
 
     // Get request body
-    const { cancelAtPeriodEnd = true } = await request.json();
+    const { cancelAtPeriodEnd = true, reason = '' } = await req.json();
+
+    // Initialize the subscription service
+    const subscriptionService = new SubscriptionService();
 
     // Cancel the subscription
     const result = await subscriptionService.cancelSubscription({
       subscriptionId: id,
       cancelAtPeriodEnd,
+      reason,
     });
 
     if (!result.success) {
       return NextResponse.json(
-        { error: result.error },
+        { error: result.error || 'Failed to cancel subscription' },
         { status: 400 }
       );
     }
 
     return NextResponse.json(
       { 
-        success: true,
+        message: cancelAtPeriodEnd 
+          ? 'Subscription scheduled for cancellation at the end of the billing period' 
+          : 'Subscription canceled successfully',
         subscription: result.subscription 
       },
       { status: 200 }
@@ -69,7 +74,7 @@ export async function POST(
   } catch (error: any) {
     console.error('Error canceling subscription:', error);
     return NextResponse.json(
-      { error: error.message || 'Failed to cancel subscription' },
+      { error: 'An error occurred while canceling subscription' },
       { status: 500 }
     );
   }

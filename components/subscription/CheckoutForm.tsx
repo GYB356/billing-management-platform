@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { CardElement, useStripe, useElements } from '@stripe/react-stripe-js';
 import { AlertCircle, CheckCircle, ArrowRight } from 'lucide-react';

@@ -38,6 +38,7 @@ model User {
   invoices            Invoice[]
   subscriptions       Subscription[]
   dataPrivacyRequests DataPrivacyRequest[]
+  preference          UserPreference?
 
   @@index([email])
   @@map("users")
@@ -127,6 +128,7 @@ model Organization {
   oneTimePayments   OneTimePayment[]
   webhookEndpoints  WebhookEndpoint[]
   events            Event[]
+  settings          OrganizationSettings?
 
   @@map("organizations")
 }
@@ -453,6 +455,7 @@ model Invoice {
   currencyRelation Currency?  @relation(fields: [currency], references: [code])
   exchangeRate   Float?       // Exchange rate at the time of invoice creation
   lastPaymentError String?
+  metadata       Json?        // For storing localization and currency information
 
   @@unique([organizationId, number])
   @@map("invoices")
@@ -680,22 +683,14 @@ model Translation {
 
 // User preferences model for storing user-specific settings
 model UserPreference {
-  id           String   @id @default(cuid())
-  userId       String   @unique
-  language     String? // Preferred language/locale
-  dateFormat   String? // Preferred date format
-  timeFormat   String? // Preferred time format
-  numberFormat String? // Preferred number format
-  timezone     String? // Preferred timezone
-  currencyCode String? // Preferred currency
-  theme        String? // UI theme preference
-  notifyEmail  Boolean  @default(true) // Email notification preference
-  notifyInApp  Boolean  @default(true) // In-app notification preference
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  // Relations
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id         String   @id @default(cuid())
+  userId     String   @unique
+  currency   String   @default("USD")
+  locale     String   @default("en-US")
+  timezone   String   @default("UTC")
+  user       User     @relation(fields: [userId], references: [id])
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 }
 
 model UserPreferences {
@@ -1053,15 +1048,17 @@ model Currency {
 
 // Exchange rates between currencies
 model ExchangeRate {
-  sourceCurrency  String
-  targetCurrency  String
-  rate            Float
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
+  id            String   @id @default(cuid())
+  fromCurrency  String
+  toCurrency    String
+  rate          Float
+  provider      String   @default("internal")
+  lastUpdated   DateTime
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  @@id([sourceCurrency, targetCurrency])
-  @@index([sourceCurrency])
-  @@index([targetCurrency])
+  @@unique([fromCurrency, toCurrency])
+  @@index([lastUpdated])
 }
 
 // Add locale model for language support
@@ -1262,4 +1259,64 @@ model BillingAuditLog {
   metadata  Json
   timestamp DateTime @default(now())
   user      User     @relation(fields: [userId], references: [id])
+}
+
+model OrganizationSettings {
+  id                    String   @id @default(cuid())
+  organizationId        String   @unique
+  defaultCurrency       String   @default("USD")
+  defaultLanguage       String   @default("en-US")
+  defaultTaxBehavior    String   @default("exclusive") // inclusive, exclusive, or automatic
+  priceDisplaySettings  Json?    // For storing price display preferences
+  taxSettings           Json?    // For storing tax calculation rules
+  organization          Organization @relation(fields: [organizationId], references: [id])
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}
+
+model TaxRate {
+  id           String   @id @default(cuid())
+  country      String
+  region       String?
+  type         String   // VAT, GST, SALES_TAX
+  rate         Float
+  category     String?  // For different rates based on product category
+  isCompound   Boolean  @default(false)
+  description  String?
+  validFrom    DateTime @default(now())
+  validUntil   DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([country, region, type, category])
+  @@index([country, region])
+}
+
+// Custom metrics for flexible usage tracking
+model CustomMetric {
+  id        String   @id @default(cuid())
+  name      String
+  value     Float
+  unit      String?
+  tags      Json     @default("{}")
+  timestamp DateTime @default(now())
+
+  @@index([name, timestamp])
+  @@index([timestamp])
+}
+
+// Aggregated usage records
+model AggregatedUsage {
+  id         String   @id @default(cuid())
+  metricId   String
+  period     String   // ISO date string for the aggregation period
+  value      Float
+  groupKey   String   @default("default")
+  metadata   Json?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([metricId, period, groupKey])
+  @@index([metricId, period])
+  @@index([period])
 }

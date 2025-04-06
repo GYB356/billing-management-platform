@@ -49,7 +49,22 @@ module.exports = {
       timeout: 30 * 60 * 1000, // 30 minutes timeout
       retries: 3 // Retry up to 3 times on failure
     }
-  }
+  },
+
+  apps: [
+    // Usage aggregation worker
+    {
+      name: 'usage-aggregations',
+      script: 'scripts/process-usage-aggregations.ts',
+      exec_mode: 'fork',
+      cron_restart: '*/15 * * * *', // Run every 15 minutes
+      autorestart: false,
+      watch: false,
+      env: {
+        NODE_ENV: 'production'
+      }
+    }
+  ]
 };
 
 /**

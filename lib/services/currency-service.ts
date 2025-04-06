@@ -1,266 +1,288 @@
 import { prisma } from '@/lib/prisma';
+import { createEvent, EventSeverity } from '@/lib/events';
+import { stripe } from '@/lib/stripe';
+import { z } from 'zod';
 
-interface ExchangeRate {
-  from: string;
-  to: string;
-  rate: number;
-  timestamp: Date;
+interface Currency {
+  code: string;
+  name: string;
+  symbol: string;
+  decimalPlaces: number;
+  isActive: boolean;
+  locales: string[];
+  format: {
+    symbolPosition: 'before' | 'after';
+    thousandsSeparator: string;
+    decimalSeparator: string;
+    spaceBetweenAmountAndSymbol: boolean;
+  };
 }
 
-interface CurrencyFormatOptions {
-  style?: 'decimal' | 'currency';
-  minimumFractionDigits?: number;
-  maximumFractionDigits?: number;
+interface RegionalConfig {
+  currency: string;
+  taxSystem: 'VAT' | 'GST' | 'SALES_TAX';
+  defaultTaxRate: number;
+  priceDisplayTaxInclusion: boolean;
+  invoiceLanguages: string[];
+  paymentMethods: string[];
 }
 
 export class CurrencyService {
-  private readonly defaultCurrency = 'USD';
-  private readonly exchangeRateValidityHours = 24;
+  private static readonly EXCHANGE_RATE_CACHE_TTL = 4 * 60 * 60 * 1000; // 4 hours
+  private static exchangeRateCache = new Map<string, { rate: number; timestamp: number }>();
+  
+  // Enhanced currency configurations
+  private static readonly currencies: Currency[] = [
+    {
+      code: 'USD',
+      name: 'US Dollar',
+      symbol: '$',
+      decimalPlaces: 2,
+      isActive: true,
+      locales: ['en-US'],
+      format: {
+        symbolPosition: 'before',
+        thousandsSeparator: ',',
+        decimalSeparator: '.',
+        spaceBetweenAmountAndSymbol: false,
+      }
+    },
+    {
+      code: 'EUR',
+      name: 'Euro',
+      symbol: '€',
+      decimalPlaces: 2,
+      isActive: true,
+      locales: ['de-DE', 'fr-FR', 'es-ES', 'it-IT'],
+      format: {
+        symbolPosition: 'after',
+        thousandsSeparator: ' ',
+        decimalSeparator: ',',
+        spaceBetweenAmountAndSymbol: true,
+      }
+    },
+    // Add more currencies with regional formatting rules
+  ];
 
-  /**
-   * Convert amount between currencies
-   */
-  public async convert(
-    amount: number,
-    fromCurrency: string,
-    toCurrency: string
-  ): Promise<number> {
-    if (fromCurrency === toCurrency) {
-      return amount;
-    }
+  private static readonly regionalConfigs: Record<string, RegionalConfig> = {
+    EU: {
+      currency: 'EUR',
+      taxSystem: 'VAT',
+      defaultTaxRate: 0.20,
+      priceDisplayTaxInclusion: true,
+      invoiceLanguages: ['en', 'de', 'fr', 'es', 'it'],
+      paymentMethods: ['credit_card', 'sepa_debit', 'sofort', 'giropay'],
+    },
+    US: {
+      currency: 'USD',
+      taxSystem: 'SALES_TAX',
+      defaultTaxRate: 0,
+      priceDisplayTaxInclusion: false,
+      invoiceLanguages: ['en'],
+      paymentMethods: ['credit_card', 'ach'],
+    },
+    // Add more regional configurations
+  };
 
-    const rate = await this.getExchangeRate(fromCurrency, toCurrency);
-    return Math.round(amount * rate);
-  }
-
-  /**
-   * Format amount according to currency
-   */
-  public format(
+  static async formatCurrencyForLocale(
     amount: number,
     currency: string,
-    options: CurrencyFormatOptions = {}
-  ): string {
-    const {
-      style = 'currency',
-      minimumFractionDigits = 2,
-      maximumFractionDigits = 2
-    } = options;
+    locale: string,
+    options: {
+      includeTax?: boolean;
+      displayCurrency?: boolean;
+      customFormat?: Partial<Currency['format']>;
+    } = {}
+  ): Promise<string> {
+    const currencyConfig = this.currencies.find(c => c.code === currency.toUpperCase());
+    if (!currencyConfig) {
+      throw new Error(`Unsupported currency: ${currency}`);
+    }
 
-    return new Intl.NumberFormat('en-US', {
-      style,
-      currency,
-      minimumFractionDigits,
-      maximumFractionDigits
-    }).format(amount / 100); // Convert cents to whole units
-  }
+    const format = { ...currencyConfig.format, ...options.customFormat };
+    const regionalConfig = this.getRegionalConfigForLocale(locale);
 
-  /**
-   * Get exchange rate between two currencies
-   */
-  private async getExchangeRate(
-    fromCurrency: string,
-    toCurrency: string
-  ): Promise<number> {
-    // Check cache first
-    const cachedRate = await prisma.exchangeRate.findFirst({
-      where: {
-        fromCurrency,
-        toCurrency,
-        updatedAt: {
-          gte: new Date(Date.now() - this.exchangeRateValidityHours * 60 * 60 * 1000)
-        }
-      },
-      orderBy: {
-        updatedAt: 'desc'
+    let formattedAmount = amount;
+    if (options.includeTax && regionalConfig.priceDisplayTaxInclusion) {
+      formattedAmount *= (1 + regionalConfig.defaultTaxRate);
+    }
+
+    const parts = new Intl.NumberFormat(locale, {
+      minimumFractionDigits: currencyConfig.decimalPlaces,
+      maximumFractionDigits: currencyConfig.decimalPlaces,
+    }).formatToParts(formattedAmount);
+
+    let result = '';
+    const symbol = options.displayCurrency ? currencyConfig.symbol : '';
+    const space = format.spaceBetweenAmountAndSymbol ? ' ' : '';
+
+    if (format.symbolPosition === 'before' && symbol) {
+      result += symbol + space;
+    }
+
+    parts.forEach(part => {
+      switch (part.type) {
+        case 'group':
+          result += format.thousandsSeparator;
+          break;
+        case 'decimal':
+          result += format.decimalSeparator;
+          break;
+        default:
+          result += part.value;
       }
     });
 
-    if (cachedRate) {
-      return cachedRate.rate;
+    if (format.symbolPosition === 'after' && symbol) {
+      result += space + symbol;
     }
 
-    // Fetch new rate from external service
-    const rate = await this.fetchExchangeRate(fromCurrency, toCurrency);
+    return result;
+  }
 
-    // Cache the new rate
-    await prisma.exchangeRate.create({
-      data: {
+  static getRegionalConfigForLocale(locale: string): RegionalConfig {
+    const region = locale.split('-')[1] || locale;
+    if (this.isEUCountry(region)) {
+      return this.regionalConfigs.EU;
+    }
+    return this.regionalConfigs[region] || this.regionalConfigs.US;
+  }
+
+  static isEUCountry(country: string): boolean {
+    const euCountries = ['DE', 'FR', 'ES', 'IT', 'NL', 'BE', 'PT', 'GR', 'IE', 'AT', 'FI', 'SE', 'DK'];
+    return euCountries.includes(country.toUpperCase());
+  }
+
+  static async convertCurrency(
+    amount: number,
+    fromCurrency: string,
+    toCurrency: string,
+    options: {
+      includeDetails?: boolean;
+      roundingMode?: 'ceil' | 'floor' | 'round';
+    } = {}
+  ): Promise<number | { amount: number; rate: number; timestamp: number }> {
+    const rate = await this.getExchangeRate(fromCurrency, toCurrency);
+    const convertedAmount = amount * rate;
+    
+    const roundedAmount = this.roundAmount(convertedAmount, toCurrency, options.roundingMode);
+    
+    if (options.includeDetails) {
+      return {
+        amount: roundedAmount,
+        rate,
+        timestamp: Date.now(),
+      };
+    }
+    
+    return roundedAmount;
+  }
+
+  private static roundAmount(
+    amount: number,
+    currency: string,
+    mode: 'ceil' | 'floor' | 'round' = 'round'
+  ): number {
+    const currencyConfig = this.currencies.find(c => c.code === currency.toUpperCase());
+    const multiplier = Math.pow(10, currencyConfig?.decimalPlaces || 2);
+    
+    switch (mode) {
+      case 'ceil':
+        return Math.ceil(amount * multiplier) / multiplier;
+      case 'floor':
+        return Math.floor(amount * multiplier) / multiplier;
+      default:
+        return Math.round(amount * multiplier) / multiplier;
+    }
+  }
+
+  private static async getExchangeRate(fromCurrency: string, toCurrency: string): Promise<number> {
+    if (fromCurrency === toCurrency) return 1;
+
+    const cacheKey = `${fromCurrency}-${toCurrency}`;
+    const cached = this.exchangeRateCache.get(cacheKey);
+    
+    if (cached && Date.now() - cached.timestamp < this.EXCHANGE_RATE_CACHE_TTL) {
+      return cached.rate;
+    }
+
+    try {
+      const rate = await this.fetchExchangeRate(fromCurrency, toCurrency);
+      this.exchangeRateCache.set(cacheKey, { rate, timestamp: Date.now() });
+      return rate;
+    } catch (error) {
+      console.error('Error fetching exchange rate:', error);
+      if (cached) {
+        console.warn('Using stale exchange rate from cache');
+        return cached.rate;
+      }
+      throw error;
+    }
+  }
+
+  private static async fetchExchangeRate(fromCurrency: string, toCurrency: string): Promise<number> {
+    // Try Stripe first for real-time rates
+    try {
+      const stripeRate = await stripe.exchangeRates.retrieve(toCurrency);
+      if (stripeRate.rates[fromCurrency]) {
+        return 1 / stripeRate.rates[fromCurrency];
+      }
+    } catch (error) {
+      console.warn('Stripe exchange rate fetch failed, falling back to backup service:', error);
+    }
+
+    // Fallback to exchange rate API
+    const response = await fetch(
+      `https://api.exchangerate.host/convert?from=${fromCurrency}&to=${toCurrency}`
+    );
+
+    if (!response.ok) {
+      throw new Error(`Exchange rate API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    if (!data.result) {
+      throw new Error('Invalid exchange rate data received');
+    }
+
+    await this.logExchangeRateUpdate(fromCurrency, toCurrency, data.result);
+    return data.result;
+  }
+
+  private static async logExchangeRateUpdate(
+    fromCurrency: string,
+    toCurrency: string,
+    rate: number
+  ): Promise<void> {
+    await createEvent({
+      eventType: 'EXCHANGE_RATE_UPDATED',
+      resourceType: 'CURRENCY',
+      severity: EventSeverity.INFO,
+      metadata: {
         fromCurrency,
         toCurrency,
         rate,
-        updatedAt: new Date()
-      }
+        timestamp: new Date().toISOString(),
+      },
     });
 
-    return rate;
-  }
-
-  /**
-   * Fetch current exchange rate from external service
-   */
-  private async fetchExchangeRate(
-    fromCurrency: string,
-    toCurrency: string
-  ): Promise<number> {
-    // This would be implemented to use a real exchange rate API
-    // For now, return a placeholder rate
-    if (fromCurrency === this.defaultCurrency) {
-      return this.getPlaceholderRate(toCurrency);
-    } else if (toCurrency === this.defaultCurrency) {
-      return 1 / this.getPlaceholderRate(fromCurrency);
-    } else {
-      // Cross rate: first convert to USD, then to target currency
-      const toUSD = 1 / this.getPlaceholderRate(fromCurrency);
-      return toUSD * this.getPlaceholderRate(toCurrency);
-    }
-  }
-
-  /**
-   * Get placeholder exchange rates for demonstration
-   */
-  private getPlaceholderRate(currency: string): number {
-    const rates: Record<string, number> = {
-      EUR: 0.85,
-      GBP: 0.73,
-      JPY: 110.0,
-      AUD: 1.35,
-      CAD: 1.25,
-      CHF: 0.92,
-      CNY: 6.45,
-      INR: 74.5,
-      NZD: 1.45,
-      BRL: 5.20
-    };
-
-    return rates[currency] || 1;
-  }
-
-  /**
-   * Round amount according to currency
-   */
-  public roundAmount(amount: number, currency: string): number {
-    const precision = this.getCurrencyPrecision(currency);
-    const multiplier = Math.pow(10, precision);
-    return Math.round(amount * multiplier) / multiplier;
-  }
-
-  /**
-   * Get decimal precision for currency
-   */
-  private getCurrencyPrecision(currency: string): number {
-    const precisions: Record<string, number> = {
-      JPY: 0,
-      KRW: 0,
-      HUF: 0,
-      TWD: 0,
-      CLP: 0
-    };
-
-    return precisions[currency] || 2;
-  }
-
-  /**
-   * Get supported currencies
-   */
-  public async getSupportedCurrencies(): Promise<string[]> {
-    const currencies = await prisma.currency.findMany({
-      where: { isActive: true },
-      orderBy: { code: 'asc' }
+    await prisma.exchangeRate.upsert({
+      where: {
+        fromCurrency_toCurrency: {
+          fromCurrency,
+          toCurrency,
+        },
+      },
+      update: {
+        rate,
+        lastUpdated: new Date(),
+      },
+      create: {
+        fromCurrency,
+        toCurrency,
+        rate,
+        lastUpdated: new Date(),
+      },
     });
-
-    return currencies.map(c => c.code);
-  }
-
-  /**
-   * Validate currency code
-   */
-  public async isValidCurrency(currency: string): Promise<boolean> {
-    const supportedCurrencies = await this.getSupportedCurrencies();
-    return supportedCurrencies.includes(currency);
-  }
-
-  /**
-   * Get currency symbol
-   */
-  public getCurrencySymbol(currency: string): string {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency,
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0
-    })
-      .format(0)
-      .replace(/[0-9]/g, '')
-      .trim();
-  }
-
-  /**
-   * Convert currency display format
-   */
-  public formatForDisplay(
-    amount: number,
-    currency: string,
-    locale: string = 'en-US'
-  ): string {
-    return new Intl.NumberFormat(locale, {
-      style: 'currency',
-      currency,
-      currencyDisplay: 'symbol'
-    }).format(amount / 100); // Convert cents to whole units
-  }
-
-  /**
-   * Format amount range
-   */
-  public formatRange(
-    minAmount: number,
-    maxAmount: number,
-    currency: string,
-    locale: string = 'en-US'
-  ): string {
-    const formatter = new Intl.NumberFormat(locale, {
-      style: 'currency',
-      currency,
-      currencyDisplay: 'symbol'
-    });
-
-    return `${formatter.format(minAmount / 100)} - ${formatter.format(maxAmount / 100)}`;
-  }
-
-  /**
-   * Get currency metadata
-   */
-  public async getCurrencyMetadata(currency: string) {
-    const metadata = await prisma.currency.findUnique({
-      where: { code: currency }
-    });
-
-    if (!metadata) {
-      throw new Error(`Currency ${currency} not found`);
-    }
-
-    return {
-      code: metadata.code,
-      name: metadata.name,
-      symbol: metadata.symbol,
-      precision: metadata.precision,
-      thousandsSeparator: metadata.thousandsSeparator,
-      decimalSeparator: metadata.decimalSeparator,
-      symbolPosition: metadata.symbolPosition
-    };
-  }
-
-  /**
-   * Parse currency string to number
-   */
-  public parseCurrencyString(value: string, currency: string): number {
-    // Remove currency symbol and any non-numeric characters except decimal point
-    const numericString = value
-      .replace(this.getCurrencySymbol(currency), '')
-      .replace(/[^0-9.]/g, '');
-
-    // Parse to number and convert to cents
-    return Math.round(parseFloat(numericString) * 100);
   }
 }

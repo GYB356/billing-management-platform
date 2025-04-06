@@ -1,68 +1,54 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { AnalyticsService } from '@/lib/services/analytics-service';
-import { CurrencyService } from '@/lib/currency';
+import { RevenueForecastService } from '@/lib/services/revenue-forecast';
+import { CohortAnalysisService } from '@/lib/services/cohort-analysis';
+import { CustomerAnalyticsService } from '@/lib/services/customer-analytics';
+import { format } from 'date-fns';
 
-export async function GET(request: NextRequest) {
+export async function GET(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session?.user?.email) {
+    if (!session?.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const searchParams = new URL(request.url).searchParams;
-    const organizationId = searchParams.get('organizationId');
-    const type = searchParams.get('type');
-    const from = searchParams.get('from');
-    const to = searchParams.get('to');
+    const searchParams = req.nextUrl.searchParams;
+    const type = searchParams.get('type') || 'revenue';
+    const startDate = searchParams.get('startDate') 
+      ? new Date(searchParams.get('startDate')!) 
+      : null;
+    const endDate = searchParams.get('endDate') 
+      ? new Date(searchParams.get('endDate')!) 
+      : null;
 
-    if (!organizationId || !type) {
-      return NextResponse.json({ error: 'Organization ID and type are required' }, { status: 400 });
-    }
-
-    // Parse date range
-    let dateRange = {
-      startDate: from ? new Date(from) : new Date(new Date().setMonth(new Date().getMonth() - 1)),
-      endDate: to ? new Date(to) : new Date(),
-    };
-
-    // Initialize analytics service
-    const analyticsService = AnalyticsService.getInstance();
     let csvContent = '';
+    const timestamp = format(new Date(), 'yyyy-MM-dd_HH-mm');
 
     switch (type) {
       case 'revenue': {
-        const [revenue, revenueOverTime, revenueForecast] = await Promise.all([
-          analyticsService.getRevenueMetrics(organizationId),
-          analyticsService.getRevenueTimeSeries(organizationId),
-          analyticsService.getRevenueMetrics(organizationId).then(async (metrics) => {
-            const data = await generateRevenueForecast(revenueOverTime);
-            return data;
-          })
+        const [metrics, forecast] = await Promise.all([
+          RevenueForecastService.getCurrentMetrics(),
+          RevenueForecastService.generateForecast()
         ]);
 
-        csvContent = generateRevenueReport(revenue, revenueOverTime, revenueForecast);
-        break;
-      }
-
-      case 'subscriptions': {
-        const [subscriptions, subscriptionsOverTime] = await Promise.all([
-          analyticsService.getSubscriptionAnalytics(organizationId),
-          analyticsService.getSubscriptionTimeSeries(organizationId)
-        ]);
-
-        csvContent = generateSubscriptionReport(subscriptions, subscriptionsOverTime);
+        csvContent = generateRevenueReport(metrics, forecast);
         break;
       }
 
       case 'customers': {
-        const [customers, customerRetention] = await Promise.all([
-          analyticsService.getCustomerAnalytics(organizationId),
-          analyticsService.getCustomerRetention(organizationId)
+        const [metrics, cohorts] = await Promise.all([
+          CustomerAnalyticsService.getCustomerMetrics(),
+          CohortAnalysisService.generateCohortAnalysis()
         ]);
 
-        csvContent = generateCustomerReport(customers, customerRetention);
+        csvContent = generateCustomerReport(metrics, cohorts);
+        break;
+      }
+
+      case 'churn': {
+        const analysis = await CohortAnalysisService.getChurnAnalysis();
+        csvContent = generateChurnReport(analysis);
         break;
       }
 
@@ -70,121 +56,102 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ error: 'Invalid export type' }, { status: 400 });
     }
 
-    // Return CSV file
-    return new NextResponse(csvContent, {
-      headers: {
-        'Content-Type': 'text/csv',
-        'Content-Disposition': `attachment; filename=${type}-analytics-${new Date().toISOString()}.csv`
-      }
-    });
+    // Create response with CSV content
+    const response = new NextResponse(csvContent);
+    response.headers.set('Content-Type', 'text/csv');
+    response.headers.set(
+      'Content-Disposition',
+      `attachment; filename="analytics_${type}_${timestamp}.csv"`
+    );
+
+    return response;
+
   } catch (error) {
-    console.error('Error exporting analytics:', error);
+    console.error('Error generating analytics export:', error);
     return NextResponse.json(
-      { error: 'Failed to export analytics data' },
+      { error: 'Failed to generate export' },
       { status: 500 }
     );
   }
 }
 
-function generateRevenueReport(revenue: any, revenueOverTime: any, revenueForecast: any): string {
+function generateRevenueReport(metrics: any, forecast: any[]): string {
   let csv = 'Revenue Metrics Report\n\n';
   
-  // Current Metrics
+  // Current metrics
   csv += 'Current Metrics\n';
   csv += 'Metric,Value\n';
-  csv += `MRR,${CurrencyService.formatCurrency(revenue.mrr, 'USD')}\n`;
-  csv += `ARR,${CurrencyService.formatCurrency(revenue.arr, 'USD')}\n`;
-  csv += `Growth,${revenue.growth.percentage}%\n`;
-  csv += `Net Revenue Retention,${revenue.netRevenueRetention}%\n`;
-  csv += `Gross Revenue Retention,${revenue.grossRevenueRetention}%\n\n`;
+  csv += `MRR,${metrics.mrr}\n`;
+  csv += `ARR,${metrics.arr}\n`;
+  csv += `Growth Rate,${metrics.growth.percentage}%\n`;
+  csv += `Net Revenue Retention,${metrics.netRevenueRetention}%\n`;
+  csv += `Gross Revenue Retention,${metrics.grossRevenueRetention}%\n`;
+  csv += `Revenue Churn,${metrics.revenueChurn}%\n\n`;
 
-  // Historical Revenue
-  csv += 'Historical Revenue\n';
-  csv += 'Date,Total Revenue,Subscription Revenue\n';
-  revenueOverTime[0].data.forEach((entry: any, index: number) => {
-    csv += `${entry.date},${entry.value},${revenueOverTime[1].data[index].value}\n`;
+  // Forecast
+  csv += 'Revenue Forecast\n';
+  csv += 'Date,Predicted Revenue,Upper Bound,Lower Bound,Confidence\n';
+  forecast.forEach(f => {
+    csv += `${format(f.date, 'yyyy-MM-dd')},${f.predicted},${f.upperBound},${f.lowerBound},${f.confidence}\n`;
+  });
+
+  return csv;
+}
+
+function generateCustomerReport(metrics: any, cohorts: any[]): string {
+  let csv = 'Customer Metrics Report\n\n';
+  
+  // Overview metrics
+  csv += 'Overview Metrics\n';
+  csv += 'Metric,Value\n';
+  csv += `Customer Lifetime Value,${metrics.ltv}\n`;
+  csv += `Customer Acquisition Cost,${metrics.cac}\n`;
+  csv += `LTV/CAC Ratio,${metrics.ltvCacRatio}\n`;
+  csv += `Average Revenue Per User,${metrics.averageRevenuePerUser}\n`;
+  csv += `Payback Period (months),${metrics.paybackPeriod}\n\n`;
+
+  // Customer segments
+  csv += 'Customer Segments\n';
+  csv += 'Segment,Count,Percentage,Average Revenue,Churn Rate\n';
+  metrics.segments.forEach((s: any) => {
+    csv += `${s.name},${s.count},${s.percentage}%,${s.averageRevenue},${s.churnRate}%\n`;
   });
   csv += '\n';
 
-  // Revenue Forecast
-  csv += 'Revenue Forecast\n';
-  csv += 'Month,Predicted Revenue,Lower Bound,Upper Bound\n';
-  revenueForecast.forEach((forecast: any) => {
-    csv += `${forecast.month},${forecast.predicted},${forecast.lowerBound},${forecast.upperBound}\n`;
+  // Cohort analysis
+  csv += 'Cohort Retention Analysis\n';
+  csv += 'Cohort Date,Original Count,' + 
+    Array.from({ length: 12 }, (_, i) => `Month ${i + 1}`).join(',') + '\n';
+  
+  cohorts.forEach(cohort => {
+    csv += `${format(cohort.cohortDate, 'yyyy-MM-dd')},${cohort.originalCount},`;
+    csv += cohort.retentionByMonth
+      .map(r => `${r.percentage}%`)
+      .join(',') + '\n';
   });
 
   return csv;
 }
 
-function generateSubscriptionReport(subscriptions: any, subscriptionsOverTime: any): string {
-  let csv = 'Subscription Metrics Report\n\n';
-
-  // Current Metrics
-  csv += 'Current Metrics\n';
+function generateChurnReport(analysis: any): string {
+  let csv = 'Churn Analysis Report\n\n';
+  
+  // Overview
+  csv += 'Overview\n';
   csv += 'Metric,Value\n';
-  csv += `Total Subscriptions,${subscriptions.totalSubscriptions}\n`;
-  csv += `Active Subscriptions,${subscriptions.activeSubscriptions}\n`;
-  csv += `Churn Rate,${subscriptions.churnRate}%\n`;
-  csv += `Average Contract Value,${CurrencyService.formatCurrency(subscriptions.averageSubscriptionValue, 'USD')}\n\n`;
+  csv += `Churn Rate,${analysis.rate}%\n`;
+  csv += `Churned Customers,${analysis.count}\n`;
+  csv += `Lost MRR,${analysis.mrr}\n`;
+  csv += `Preventable Churn Count,${analysis.preventableCount}\n\n`;
 
-  // Subscription Trends
-  csv += 'Subscription Trends\n';
-  csv += 'Date,New Subscriptions,Cancellations\n';
-  subscriptionsOverTime[0].data.forEach((entry: any, index: number) => {
-    csv += `${entry.date},${entry.value},${subscriptionsOverTime[1].data[index].value}\n`;
+  // Churn reasons
+  csv += 'Churn Reasons\n';
+  csv += 'Reason,Count,Percentage\n';
+  const totalChurned = analysis.count;
+  Object.entries(analysis.reasons).forEach(([reason, count]: [string, any]) => {
+    const percentage = (count / totalChurned) * 100;
+    csv += `${reason},${count},${percentage.toFixed(1)}%\n`;
   });
 
   return csv;
-}
-
-function generateCustomerReport(customers: any, customerRetention: any): string {
-  let csv = 'Customer Metrics Report\n\n';
-
-  // Current Metrics
-  csv += 'Current Metrics\n';
-  csv += 'Metric,Value\n';
-  csv += `Total Customers,${customers.totalCustomers}\n`;
-  csv += `Active Customers,${customers.activeCustomers}\n`;
-  csv += `Customer Lifetime Value,${CurrencyService.formatCurrency(customers.customerLifetimeValue, 'USD')}\n`;
-  csv += `Growth Rate,${customers.growth.percentage}%\n\n`;
-
-  // Retention Data
-  csv += 'Customer Retention\n';
-  csv += 'Month,Retention Rate\n';
-  customerRetention.labels.forEach((label: string, index: number) => {
-    csv += `${label},${customerRetention.retention[index]}%\n`;
-  });
-
-  return csv;
-}
-
-async function generateRevenueForecast(historicalData: any[]) {
-  // Simple linear regression for forecasting
-  const data = historicalData[0].data;
-  const values = data.map((d: any) => d.value);
-  const n = values.length;
-  
-  const sum = values.reduce((a: number, b: number) => a + b, 0);
-  const mean = sum / n;
-  const trend = (values[n - 1] - values[0]) / n;
-  
-  const forecast = [];
-  const lastValue = values[n - 1];
-  const lastDate = new Date(data[n - 1].date);
-  
-  for (let i = 1; i <= 12; i++) {
-    const predictedValue = lastValue + (trend * i);
-    const uncertainty = Math.sqrt(i) * (mean * 0.1);
-    const date = new Date(lastDate);
-    date.setMonth(date.getMonth() + i);
-    
-    forecast.push({
-      month: date.toISOString().split('T')[0].substring(0, 7),
-      predicted: Math.max(0, predictedValue),
-      upperBound: Math.max(0, predictedValue + uncertainty),
-      lowerBound: Math.max(0, predictedValue - uncertainty)
-    });
-  }
-  
-  return forecast;
 }

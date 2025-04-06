@@ -1,100 +1,53 @@
-import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth/next';
+import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import prisma from '@/lib/prisma';
-import { requirePermission } from '@/lib/auth/rbac';
-import { AnalyticsService, TimeFrame } from '@/lib/services/analytics-service';
+import { RevenueForecastService } from '@/lib/services/revenue-forecast';
+import { CohortAnalysisService } from '@/lib/services/cohort-analysis';
+import { CustomerAnalyticsService } from '@/lib/services/customer-analytics';
 
-export async function GET(request: Request) {
+export async function GET(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    
     if (!session?.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    
-    // Check if the user has permission to view analytics
-    try {
-      requirePermission(
-        session.user.role as any,
-        session.user.organizationRole as any || 'MEMBER',
-        'view:analytics'
-      );
-    } catch (error) {
-      return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 });
-    }
-    
-    // Get query parameters
-    const { searchParams } = new URL(request.url);
-    const organizationId = searchParams.get('organizationId');
-    const timeFrame = (searchParams.get('timeFrame') || 'month') as TimeFrame;
-    const metric = searchParams.get('metric');
-    
-    if (!organizationId) {
-      return NextResponse.json({ error: 'Organization ID is required' }, { status: 400 });
-    }
-    
-    if (!metric) {
-      return NextResponse.json({ error: 'Metric type is required' }, { status: 400 });
-    }
-    
-    // Check if the user has access to the organization
-    const userOrganization = await prisma.userOrganization.findFirst({
-      where: {
-        userId: session.user.id,
-        organizationId,
+
+    const searchParams = req.nextUrl.searchParams;
+    const timeframe = searchParams.get('timeframe') || 'month';
+    const forecastMonths = parseInt(searchParams.get('forecastMonths') || '12');
+
+    const [
+      revenueMetrics,
+      revenueForecast,
+      cohortAnalysis,
+      churnAnalysis,
+      customerMetrics
+    ] = await Promise.all([
+      RevenueForecastService.getCurrentMetrics(),
+      RevenueForecastService.generateForecast(forecastMonths),
+      CohortAnalysisService.generateCohortAnalysis(),
+      CohortAnalysisService.getChurnAnalysis(timeframe as any),
+      CustomerAnalyticsService.getCustomerMetrics()
+    ]);
+
+    return NextResponse.json({
+      revenue: {
+        current: revenueMetrics,
+        forecast: revenueForecast,
       },
+      customers: {
+        metrics: customerMetrics,
+        cohorts: cohortAnalysis,
+      },
+      churn: churnAnalysis,
+      timestamp: new Date().toISOString()
     });
-    
-    if (!userOrganization && session.user.role !== 'ADMIN' && session.user.role !== 'SUPER_ADMIN') {
-      return NextResponse.json(
-        { error: 'Organization not found or you do not have permission to access it' },
-        { status: 404 }
-      );
-    }
-    
-    // Get analytics data based on the requested metric
-    const analyticsService = new AnalyticsService();
-    
-    let data;
-    
-    switch (metric) {
-      case 'revenue':
-        data = await analyticsService.getRevenueAnalytics(organizationId, timeFrame);
-        break;
-      case 'subscriptions':
-        data = await analyticsService.getSubscriptionAnalytics(organizationId, timeFrame);
-        break;
-      case 'customers':
-        data = await analyticsService.getCustomerAnalytics(organizationId, timeFrame);
-        break;
-      case 'invoices':
-        data = await analyticsService.getInvoiceAnalytics(organizationId, timeFrame);
-        break;
-      case 'revenueTimeSeries':
-        data = await analyticsService.getRevenueTimeSeries(organizationId, timeFrame);
-        break;
-      case 'subscriptionTimeSeries':
-        data = await analyticsService.getSubscriptionTimeSeries(organizationId, timeFrame);
-        break;
-      case 'topPlans':
-        const limit = parseInt(searchParams.get('limit') || '5');
-        data = await analyticsService.getTopPlans(organizationId, limit);
-        break;
-      case 'customerRetention':
-        const months = parseInt(searchParams.get('months') || '12');
-        data = await analyticsService.getCustomerRetention(organizationId, months);
-        break;
-      default:
-        return NextResponse.json({ error: 'Invalid metric type' }, { status: 400 });
-    }
-    
-    return NextResponse.json(data);
-  } catch (error: any) {
-    console.error('Error getting analytics metrics:', error);
+
+  } catch (error) {
+    console.error('Error fetching analytics metrics:', error);
     return NextResponse.json(
-      { error: error.message || 'Failed to get analytics metrics' },
+      { error: 'Failed to fetch analytics metrics' },
       { status: 500 }
     );
   }
-} 
+}

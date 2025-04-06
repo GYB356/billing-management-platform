@@ -1,5 +1,6 @@
 import { TaxRate } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import { createEvent } from '@/lib/events';
 
 export interface TaxRateValidationError {
   field: string;
@@ -16,123 +17,101 @@ export async function validateTaxRate(
   if (!data.name?.trim()) {
     errors.push({
       field: 'name',
-      message: 'Name is required',
+      message: 'Name is required'
     });
   }
 
-  // Validate percentage
-  if (data.percentage !== undefined) {
-    if (isNaN(data.percentage) || data.percentage < 0 || data.percentage > 100) {
-      errors.push({
-        field: 'percentage',
-        message: 'Percentage must be between 0 and 100',
-      });
-    }
+  // Validate rate
+  if (typeof data.rate !== 'number' || data.rate < 0 || data.rate > 100) {
+    errors.push({
+      field: 'rate',
+      message: 'Rate must be between 0 and 100'
+    });
   }
 
   // Validate country
   if (!data.country?.trim()) {
     errors.push({
       field: 'country',
-      message: 'Country is required',
+      message: 'Country is required'
     });
+  } else if (data.country.length !== 2) {
+    errors.push({
+      field: 'country',
+      message: 'Country must be a 2-letter ISO code'
+    });
+  }
+
+  // Validate state format if provided
+  if (data.state && data.state.length > 0) {
+    if (data.state.length > 3 && data.country === 'US') {
+      errors.push({
+        field: 'state',
+        message: 'State must be a valid state code for US'
+      });
+    }
   }
 
   // Check for overlapping tax rates
-  const overlappingRates = await prisma.taxRate.findFirst({
+  const overlappingRate = await prisma.taxRate.findFirst({
     where: {
       organizationId,
-      country: data.country || undefined,
+      country: data.country,
       state: data.state || null,
-      id: {
-        not: data.id || undefined,
-      },
-    },
+      isActive: true,
+      id: { not: data.id }, // Exclude current rate when updating
+    }
   });
 
-  if (overlappingRates) {
+  if (overlappingRate) {
     errors.push({
       field: 'location',
-      message: 'A tax rate already exists for this location',
+      message: 'An active tax rate already exists for this location'
     });
   }
+
+  // Log validation attempt
+  await createEvent({
+    type: 'TAX_RATE_VALIDATION',
+    resourceType: 'TAX_RATE',
+    resourceId: data.id || 'new',
+    metadata: {
+      organizationId,
+      errors: errors.length > 0 ? errors : undefined,
+      data
+    }
+  });
 
   return errors;
 }
 
-export async function validateTaxRateOverlap(
-  taxRate: TaxRate,
+export async function validateTaxRateDelete(
+  taxRateId: string,
   organizationId: string
-): Promise<TaxRateValidationError | null> {
-  const overlappingRates = await prisma.taxRate.findMany({
+): Promise<TaxRateValidationError[]> {
+  const errors: TaxRateValidationError[] = [];
+
+  // Check if tax rate is being used in any active invoices
+  const usedInInvoices = await prisma.invoice.count({
     where: {
       organizationId,
-      country: taxRate.country,
-      state: taxRate.state || null,
-      id: {
-        not: taxRate.id,
+      taxRates: {
+        some: {
+          id: taxRateId
+        }
       },
-      active: true,
-    },
-  });
-
-  if (overlappingRates.length > 0) {
-    return {
-      field: 'location',
-      message: 'Active tax rates cannot overlap for the same location',
-    };
-  }
-
-  return null;
-}
-
-export async function validateTaxRateHistory(
-  taxRate: TaxRate,
-  organizationId: string
-): Promise<TaxRateValidationError | null> {
-  // Check for historical conflicts
-  const historicalRates = await prisma.taxRateHistory.findMany({
-    where: {
-      taxRateId: taxRate.id,
-      changedAt: {
-        lte: new Date(),
-      },
-    },
-    orderBy: {
-      changedAt: 'desc',
-    },
-  });
-
-  if (historicalRates.length > 0) {
-    const latestHistory = historicalRates[0];
-    if (latestHistory.isActive && !taxRate.active) {
-      return {
-        field: 'active',
-        message: 'Cannot deactivate a tax rate that has been used in historical records',
-      };
+      status: {
+        in: ['DRAFT', 'PENDING', 'PAID']
+      }
     }
-  }
-
-  return null;
-}
-
-export async function validateTaxRateDeletion(
-  taxRate: TaxRate,
-  organizationId: string
-): Promise<TaxRateValidationError | null> {
-  // Check if tax rate is being used in invoices
-  const usedInInvoices = await prisma.invoiceTax.findFirst({
-    where: {
-      taxRateId: taxRate.id,
-    },
   });
 
-  if (usedInInvoices) {
-    return {
+  if (usedInInvoices > 0) {
+    errors.push({
       field: 'id',
-      message: 'Cannot delete a tax rate that has been used in invoices',
-    };
+      message: 'Cannot delete a tax rate that is used in active invoices'
+    });
   }
 
-  return null;
+  return errors;
 }

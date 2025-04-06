@@ -1,5 +1,12 @@
-import { prisma } from '@/lib/prisma';
-import { TaxRate, TaxRule, CustomerType } from '@prisma/client';
+import prisma from '@/lib/prisma';
+import { createEvent, EventType } from '@/lib/events';
+import { 
+  CustomerType, 
+  TaxType,
+  TaxRate, 
+  TaxRule, 
+  TaxCalculationResult 
+} from '@/types/tax';
 
 interface TaxCalculationParams {
   amount: number;
@@ -10,79 +17,51 @@ interface TaxCalculationParams {
   productType?: string;
 }
 
-interface TaxResult {
-  taxAmount: number;
-  taxRate: number;
-  breakdown: TaxBreakdown[];
-  appliedRules: TaxRule[];
-}
-
-interface TaxBreakdown {
-  type: string;
-  rate: number;
-  amount: number;
-  description: string;
-}
-
 export class TaxService {
+  private static taxRates: Map<string, TaxRate> = new Map();
+  private static readonly TAX_RATE_CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours
+  private static lastCacheUpdate: number = 0;
+
   /**
    * Calculate applicable taxes for a given transaction
    */
-  public async calculateTax(params: TaxCalculationParams): Promise<TaxResult> {
-    const {
-      amount,
-      countryCode,
-      stateCode,
-      customerType,
-      vatNumber,
-      productType
-    } = params;
+  public async calculateTax(params: TaxCalculationParams): Promise<TaxCalculationResult> {
+    const { amount, countryCode, stateCode, customerType, vatNumber, productType } = params;
 
-    // Get applicable tax rates
-    const taxRates = await this.getApplicableTaxRates({
-      countryCode,
-      stateCode,
-      customerType,
-      productType
-    });
+    // Check for tax exemption first
+    if (vatNumber) {
+      const isExempt = await this.checkVatExemption(vatNumber, countryCode);
+      if (isExempt) {
+        return {
+          subtotal: amount,
+          taxAmount: 0,
+          total: amount,
+          breakdown: [],
+          appliedRules: []
+        };
+      }
+    }
 
-    // Get applicable tax rules
-    const taxRules = await this.getApplicableTaxRules({
-      countryCode,
-      stateCode,
-      customerType
-    });
-
-    // Check VAT exemption
-    const isVatExempt = await this.checkVatExemption(vatNumber, countryCode);
+    // Get applicable tax rates and rules
+    const [taxRates, taxRules] = await Promise.all([
+      this.getApplicableTaxRates({ countryCode, stateCode, customerType, productType }),
+      this.getApplicableTaxRules({ countryCode, stateCode, customerType })
+    ]);
 
     // Calculate each tax component
-    const breakdown: TaxBreakdown[] = [];
     let totalTaxAmount = 0;
     let effectiveTaxRate = 0;
-
+    const breakdown: TaxCalculationResult['breakdown'] = [];
+    
     for (const rate of taxRates) {
-      // Skip VAT if exempt
-      if (rate.type === 'VAT' && isVatExempt) {
-        continue;
-      }
-
-      // Apply tax rules
       const applicableRules = taxRules.filter(rule => 
-        rule.taxRateId === rate.id &&
+        rule.taxRateId === rate.id && 
         this.isRuleApplicable(rule, amount)
       );
 
-      // Calculate base rate
       let rateToApply = rate.percentage;
-
-      // Modify rate based on rules
       for (const rule of applicableRules) {
-        if (rule.type === 'MODIFIER') {
-          rateToApply *= (1 + rule.modifier);
-        } else if (rule.type === 'OVERRIDE') {
-          rateToApply = rule.override;
-        }
+        rateToApply = this.applyTaxRule(rateToApply, rule);
       }
 
       const taxAmount = Math.round(amount * (rateToApply / 100));
@@ -93,16 +72,51 @@ export class TaxService {
         type: rate.type,
         rate: rateToApply,
         amount: taxAmount,
-        description: rate.description
+        description: this.generateTaxDescription(rate, rateToApply)
       });
     }
 
     return {
+      subtotal: amount,
       taxAmount: totalTaxAmount,
-      taxRate: effectiveTaxRate,
+      total: amount + totalTaxAmount,
       breakdown,
       appliedRules: taxRules
     };
+  }
+
+  private applyTaxRule(baseRate: number, rule: TaxRule): number {
+    switch (rule.type) {
+      case 'MODIFIER':
+        return baseRate * (1 + rule.modifier);
+      case 'OVERRIDE':
+        return rule.override;
+      default:
+        return baseRate;
+    }
+  }
+
+  private generateTaxDescription(rate: TaxRate, appliedRate: number): string {
+    return `${rate.name} (${appliedRate.toFixed(2)}%)`;
+  }
+
+  private isRuleApplicable(rule: TaxRule, amount: number): boolean {
+    if (!rule.conditions) return true;
+    
+    for (const condition of rule.conditions) {
+      switch (condition.type) {
+        case 'AMOUNT_THRESHOLD':
+          if (amount < condition.threshold) return false;
+          break;
+        case 'DATE_RANGE':
+          const now = new Date();
+          if (condition.startDate && new Date(condition.startDate) > now) return false;
+          if (condition.endDate && new Date(condition.endDate) < now) return false;
+          break;
+      }
+    }
+    
+    return true;
   }
 
   /**
@@ -240,19 +254,6 @@ export class TaxService {
     // This would be implemented based on the region and validation service used
     // For example, using VIES for EU VAT numbers
     // This is a placeholder implementation
-    return true;
-  }
-
-  /**
-   * Check if a tax rule applies based on amount thresholds
-   */
-  private isRuleApplicable(rule: TaxRule, amount: number): boolean {
-    if (rule.minAmount && amount < rule.minAmount) {
-      return false;
-    }
-    if (rule.maxAmount && amount > rule.maxAmount) {
-      return false;
-    }
     return true;
   }
 }

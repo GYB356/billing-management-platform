@@ -1,25 +1,44 @@
-export interface TaxRate {
-  id: string;
-  name: string;
-  rate: number;
-  country: string;
-  state?: string;
-  city?: string;
-  description?: string;
-  isActive: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-}
+import { Prisma } from '@prisma/client';
+
+export type TaxRate = Prisma.TaxRateGetPayload<{}>;
+export type TaxRule = Prisma.TaxRuleGetPayload<{}>;
+export type TaxValidation = Prisma.TaxIdValidationGetPayload<{}>;
+
+export const CustomerType = {
+  INDIVIDUAL: 'INDIVIDUAL',
+  BUSINESS: 'BUSINESS'
+} as const;
+
+export type CustomerType = typeof CustomerType[keyof typeof CustomerType];
+
+export const TaxType = {
+  VAT: 'VAT',
+  GST: 'GST',
+  HST: 'HST',
+  PST: 'PST',
+  SALES_TAX: 'SALES_TAX'
+} as const;
+
+export type TaxType = typeof TaxType[keyof typeof TaxType];
+
+export const TaxRuleType = {
+  MODIFIER: 'MODIFIER',
+  OVERRIDE: 'OVERRIDE'
+} as const;
+
+export type TaxRuleType = typeof TaxRuleType[keyof typeof TaxRuleType];
 
 export interface TaxCalculationResult {
   subtotal: number;
   taxAmount: number;
   total: number;
-  taxDetails: {
+  breakdown: Array<{
+    type: TaxType;
     rate: number;
     amount: number;
-    name: string;
-  }[];
+    description: string;
+  }>;
+  appliedRules: TaxRule[];
 }
 
 export interface TaxReport {
@@ -49,8 +68,22 @@ export interface TaxRateFormData {
   isActive: boolean;
 }
 
-export interface TaxReportFormData {
-  startDate: Date;
-  endDate: Date;
-  taxRateIds: string[];
-} 
+export interface TaxRuleFormData {
+  name: string;
+  description?: string;
+  type: TaxRuleType;
+  priority: number;
+  conditions: Array<{
+    type: 'AMOUNT_THRESHOLD' | 'DATE_RANGE' | 'CUSTOMER_TYPE';
+    threshold?: number;
+    startDate?: Date;
+    endDate?: Date;
+    customerTypes?: CustomerType[];
+  }>;
+  modifier?: number;
+  override?: number;
+  countryCode: string;
+  stateCode?: string;
+  isActive?: boolean;
+  organizationId: string;
+}

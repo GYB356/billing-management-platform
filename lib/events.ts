@@ -3,15 +3,23 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from './auth';
 import { headers } from 'next/headers';
 
-// Interface for createEvent parameters
-export interface CreateEventParams {
-  organizationId?: string;
-  userId?: string;
-  eventType: string;
-  resourceType: string;
-  resourceId: string;
-  metadata?: Record<string, any>;
-  severity?: EventSeverity;
+// Enum for event types
+export enum EventType {
+  // Tax-related events
+  TAX_RATE_CREATED = 'TAX_RATE_CREATED',
+  TAX_RATE_UPDATED = 'TAX_RATE_UPDATED',
+  TAX_RATE_DELETED = 'TAX_RATE_DELETED',
+  TAX_RATE_CACHE_CLEARED = 'TAX_RATE_CACHE_CLEARED',
+  TAX_RULE_CREATED = 'TAX_RULE_CREATED',
+  TAX_RULE_UPDATED = 'TAX_RULE_UPDATED',
+  TAX_RULE_DELETED = 'TAX_RULE_DELETED',
+  TAX_EXEMPTION_CREATED = 'TAX_EXEMPTION_CREATED',
+  TAX_EXEMPTION_UPDATED = 'TAX_EXEMPTION_UPDATED',
+  TAX_EXEMPTION_REVOKED = 'TAX_EXEMPTION_REVOKED',
+  TAX_EXEMPTION_EXPIRING = 'TAX_EXEMPTION_EXPIRING',
+  TAX_ID_VALIDATION = 'TAX_ID_VALIDATION',
+  TAX_CALCULATION = 'TAX_CALCULATION',
+  TAX_REPORT_GENERATED = 'TAX_REPORT_GENERATED',
 }
 
 // Enum for event severity levels
@@ -20,6 +28,17 @@ export enum EventSeverity {
   WARNING = 'WARNING',
   ERROR = 'ERROR',
   CRITICAL = 'CRITICAL'
+}
+
+// Interface for createEvent parameters
+export interface CreateEventParams {
+  eventType: EventType;
+  resourceType: string;
+  resourceId: string;
+  severity?: EventSeverity;
+  metadata?: Record<string, any>;
+  organizationId?: string;
+  userId?: string;
 }
 
 /**
@@ -387,4 +406,4 @@ export function createAuditMiddleware(options: {
       // Don't block the request even if auditing fails
     }
   };
-} 
+}

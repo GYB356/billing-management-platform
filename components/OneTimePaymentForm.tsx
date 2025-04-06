@@ -10,6 +10,10 @@ import {
   Elements,
 } from '@stripe/react-stripe-js';
 import { loadStripe } from '@stripe/stripe-js';
+import { PayPalScriptProvider } from '@paypal/react-paypal-js';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { PayPalPaymentButton } from './billing/PayPalPaymentButton';
 import CouponRedemption from './CouponRedemption';
 
 // Make sure to call loadStripe outside of a component's render to avoid
@@ -19,11 +23,12 @@ const stripePromise = loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY 
 
 type PaymentFormProps = {
   amount: number;
-  currency: string;
-  description: string;
+  currency?: string;
+  description?: string;
   organizationId: string;
   onSuccess?: (paymentData: any) => void;
   onCancel?: () => void;
+  onError?: (error: Error) => void;
   metadata?: Record<string, any>;
   className?: string;
 };
@@ -105,64 +110,6 @@ export default function OneTimePaymentForm(props: PaymentFormProps) {
     appearance,
   };
   
-  if (loading) {
-    return (
-      <div className={`bg-white rounded-lg shadow-md p-6 ${props.className}`}>
-        <div className="text-center py-4">
-          <div className="animate-pulse flex space-x-4 justify-center items-center">
-            <div className="rounded-full bg-slate-200 h-10 w-10"></div>
-            <div className="flex-1 space-y-6 py-1 max-w-sm">
-              <div className="h-2 bg-slate-200 rounded"></div>
-              <div className="space-y-3">
-                <div className="grid grid-cols-3 gap-4">
-                  <div className="h-2 bg-slate-200 rounded col-span-2"></div>
-                  <div className="h-2 bg-slate-200 rounded col-span-1"></div>
-                </div>
-                <div className="h-2 bg-slate-200 rounded"></div>
-              </div>
-            </div>
-          </div>
-          <p className="mt-4 text-gray-500">Setting up payment...</p>
-        </div>
-      </div>
-    );
-  }
-  
-  if (error) {
-    return (
-      <div className={`bg-white rounded-lg shadow-md p-6 ${props.className}`}>
-        <div className="text-center py-4">
-          <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-red-100">
-            <svg
-              className="h-6 w-6 text-red-600"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-              />
-            </svg>
-          </div>
-          <h3 className="mt-3 text-lg font-medium text-gray-900">Payment setup failed</h3>
-          <p className="mt-2 text-sm text-red-600">{error}</p>
-          <div className="mt-4">
-            <button
-              type="button"
-              onClick={props.onCancel}
-              className="inline-flex justify-center rounded-md border border-gray-300 bg-white py-2 px-4 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
-            >
-              Go back
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-  
   // Calculate the actual payment amount with coupon applied
   let displayAmount = props.amount;
   if (appliedCoupon && appliedCoupon.valid) {
@@ -182,31 +129,99 @@ export default function OneTimePaymentForm(props: PaymentFormProps) {
   };
   
   return (
-    <div className={`bg-white rounded-lg shadow-md p-6 ${props.className}`}>
-      <div className="mb-6">
-        <h2 className="text-xl font-semibold text-gray-900 mb-1">
-          {props.description}
-        </h2>
-        <p className="text-gray-600">
-          Total: {formatCurrency(displayAmount, props.currency)}
-        </p>
-      </div>
-      
-      <CouponRedemption 
-        onApplyCoupon={handleApplyCoupon}
-        className="mb-6"
-      />
-      
-      {clientSecret && (
-        <Elements options={options} stripe={stripePromise}>
-          <CheckoutForm 
-            amount={displayAmount}
-            currency={props.currency}
-            onSuccess={props.onSuccess}
-            onCancel={props.onCancel}
-          />
-        </Elements>
-      )}
+    <div className={props.className}>
+      <Card>
+        <CardHeader>
+          <CardTitle>Payment Method</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Tabs defaultValue="card">
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="card">Credit Card</TabsTrigger>
+              <TabsTrigger value="paypal">PayPal</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="card" className="space-y-4">
+              {loading ? (
+                <div className={`bg-white rounded-lg shadow-md p-6 ${props.className}`}>
+                  <div className="text-center py-4">
+                    <div className="animate-pulse flex space-x-4 justify-center items-center">
+                      <div className="rounded-full bg-slate-200 h-10 w-10"></div>
+                      <div className="flex-1 space-y-6 py-1 max-w-sm">
+                        <div className="h-2 bg-slate-200 rounded"></div>
+                        <div className="space-y-3">
+                          <div className="grid grid-cols-3 gap-4">
+                            <div className="h-2 bg-slate-200 rounded col-span-2"></div>
+                            <div className="h-2 bg-slate-200 rounded col-span-1"></div>
+                          </div>
+                          <div className="h-2 bg-slate-200 rounded"></div>
+                        </div>
+                      </div>
+                    </div>
+                    <p className="mt-4 text-gray-500">Setting up payment...</p>
+                  </div>
+                </div>
+              ) : error ? (
+                <div className={`bg-white rounded-lg shadow-md p-6 ${props.className}`}>
+                  <div className="text-center py-4">
+                    <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-red-100">
+                      <svg
+                        className="h-6 w-6 text-red-600"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                        />
+                      </svg>
+                    </div>
+                    <h3 className="mt-3 text-lg font-medium text-gray-900">Payment setup failed</h3>
+                    <p className="mt-2 text-sm text-red-600">{error}</p>
+                    <div className="mt-4">
+                      <button
+                        type="button"
+                        onClick={props.onCancel}
+                        className="inline-flex justify-center rounded-md border border-gray-300 bg-white py-2 px-4 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+                      >
+                        Go back
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <Elements stripe={stripePromise} options={options}>
+                  <PaymentElement />
+                  <CheckoutForm 
+                    amount={displayAmount}
+                    currency={props.currency || 'USD'}
+                    onSuccess={props.onSuccess}
+                    onCancel={props.onCancel}
+                  />
+                </Elements>
+              )}
+            </TabsContent>
+
+            <TabsContent value="paypal">
+              <PayPalScriptProvider options={{
+                'client-id': process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID!,
+                currency: props.currency || 'USD'
+              }}>
+                <PayPalPaymentButton
+                  amount={props.amount}
+                  currency={props.currency}
+                  description={props.description}
+                  onSuccess={props.onSuccess}
+                  onError={props.onError}
+                />
+              </PayPalScriptProvider>
+            </TabsContent>
+          </Tabs>
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -345,4 +360,4 @@ function CheckoutForm({
       )}
     </>
   );
-} 
+}

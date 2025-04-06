@@ -667,6 +667,13 @@ enum PaymentStatus {
   REFUNDED
 }
 
+enum PaymentProvider {
+  STRIPE
+  PAYPAL
+  BANK_TRANSFER
+  OTHER
+}
+
 // Translation model for storing internationalization content
 model Translation {
   id        String   @id @default(cuid())

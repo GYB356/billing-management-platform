@@ -1,221 +1,169 @@
-import { prisma } from '@/lib/prisma';
-import { PaymentStatus, SubscriptionStatus } from '@prisma/client';
+import { prisma } from '../prisma';
+import { subMonths, startOfMonth, endOfMonth, format } from 'date-fns';
+import { CurrencyService } from '../currency';
 
-export interface AnalyticsPeriod {
-  startDate: Date;
-  endDate: Date;
-}
-
-export interface RevenueSummary {
-  totalRevenue: number;
-  subscriberRevenue: number;
-  oneTimeRevenue: number;
-  recurringRevenue: number;
-  refundedAmount: number;
-  netRevenue: number;
-  growth: {
-    percentage: number;
-    trend: 'up' | 'down' | 'neutral';
+interface AdvancedAnalyticsMetrics {
+  revenue: {
+    mrr: number;
+    arr: number;
+    netRevenue: number;
+    grossRevenue: number;
+    growth: {
+      percentage: number;
+      trend: 'up' | 'down' | 'neutral';
+    };
+    expansionRevenue: number;
+    contractionRevenue: number;
+    netRevenueRetention: number;
+    grossRevenueRetention: number;
   };
-}
-
-export interface SubscriptionSummary {
-  totalSubscriptions: number;
-  activeSubscriptions: number;
-  canceledSubscriptions: number;
-  pausedSubscriptions: number;
-  averageSubscriptionValue: number;
-  churnRate: number;
-  growth: {
-    percentage: number;
-    trend: 'up' | 'down' | 'neutral';
+  customers: {
+    total: number;
+    active: number;
+    churnedThisPeriod: number;
+    newThisPeriod: number;
+    acquisitionCost: number;
+    lifetimeValue: number;
+    segmentation: Array<{
+      segment: string;
+      count: number;
+      percentage: number;
+    }>;
   };
-}
-
-export interface CustomerSummary {
-  totalCustomers: number;
-  activeCustomers: number;
-  inactiveCustomers: number;
-  newCustomers: number;
-  customerLifetimeValue: number;
-  growth: {
-    percentage: number;
-    trend: 'up' | 'down' | 'neutral';
+  subscriptions: {
+    active: number;
+    trialing: number;
+    churnRate: number;
+    conversionRate: number;
+    averageValue: number;
+    distribution: {
+      byPlan: Array<{
+        plan: string;
+        count: number;
+        percentage: number;
+      }>;
+      byBillingCycle: Array<{
+        cycle: string;
+        count: number;
+        percentage: number;
+      }>;
+    };
   };
-}
-
-export interface UsageSummary {
-  totalUsage: number;
-  usageByFeature: Record<string, number>;
-  overageCharges: number;
-  utilizationRate: number;
 }
 
 export class AnalyticsService {
-  /**
-   * Get revenue metrics for a period
-   */
-  public async getRevenueSummary(period: AnalyticsPeriod): Promise<RevenueSummary> {
-    const { startDate, endDate } = period;
-
-    // Get all successful payments in the period
-    const payments = await prisma.payment.findMany({
-      where: {
-        status: {
-          in: [PaymentStatus.COMPLETED, PaymentStatus.PARTIALLY_REFUNDED]
-        },
-        createdAt: {
-          gte: startDate,
-          lte: endDate
-        }
-      },
-      include: {
-        refunds: true,
-        subscription: true
-      }
-    });
-
-    let totalRevenue = 0;
-    let subscriberRevenue = 0;
-    let oneTimeRevenue = 0;
-    let refundedAmount = 0;
-
-    for (const payment of payments) {
-      const paymentAmount = payment.amount;
-      totalRevenue += paymentAmount;
-
-      if (payment.subscription) {
-        subscriberRevenue += paymentAmount;
-      } else {
-        oneTimeRevenue += paymentAmount;
-      }
-
-      // Calculate refunds
-      const refunds = payment.refunds.reduce((sum, refund) => sum + refund.amount, 0);
-      refundedAmount += refunds;
-    }
-
-    // Calculate recurring revenue (MRR)
-    const recurringRevenue = await this.calculateMRR(endDate);
-
-    // Calculate growth
-    const previousPeriodStart = new Date(startDate);
-    previousPeriodStart.setMonth(previousPeriodStart.getMonth() - 1);
-    const previousPeriodEnd = new Date(endDate);
-    previousPeriodEnd.setMonth(previousPeriodEnd.getMonth() - 1);
-
-    const previousRevenue = await this.calculateTotalRevenue({
-      startDate: previousPeriodStart,
-      endDate: previousPeriodEnd
-    });
-
-    const growth = this.calculateGrowth(totalRevenue, previousRevenue);
-
-    return {
-      totalRevenue,
-      subscriberRevenue,
-      oneTimeRevenue,
-      recurringRevenue,
-      refundedAmount,
-      netRevenue: totalRevenue - refundedAmount,
-      growth
-    };
-  }
-
-  /**
-   * Get subscription metrics
-   */
-  public async getSubscriptionSummary(period: AnalyticsPeriod): Promise<SubscriptionSummary> {
-    const { startDate, endDate } = period;
-
-    // Get subscription counts
+  async getAdvancedMetrics(startDate: Date, endDate: Date): Promise<AdvancedAnalyticsMetrics> {
     const [
-      totalSubscriptions,
-      activeSubscriptions,
-      canceledSubscriptions,
-      pausedSubscriptions
+      revenueMetrics,
+      customerMetrics,
+      subscriptionMetrics
     ] = await Promise.all([
-      prisma.subscription.count(),
-      prisma.subscription.count({
-        where: { status: 'ACTIVE' }
-      }),
-      prisma.subscription.count({
-        where: {
-          canceledAt: {
-            gte: startDate,
-            lte: endDate
-          }
-        }
-      }),
-      prisma.subscription.count({
-        where: { status: 'PAUSED' }
-      })
+      this.calculateRevenueMetrics(startDate, endDate),
+      this.calculateCustomerMetrics(startDate, endDate),
+      this.calculateSubscriptionMetrics(startDate, endDate)
     ]);
 
-    // Calculate average subscription value
-    const subscriptions = await prisma.subscription.findMany({
-      where: { status: 'ACTIVE' },
-      include: {
-        plan: true
-      }
-    });
-
-    const totalValue = subscriptions.reduce((sum, sub) => sum + sub.plan.basePrice, 0);
-    const averageSubscriptionValue = totalValue / (subscriptions.length || 1);
-
-    // Calculate churn rate
-    const startingCustomers = await prisma.subscription.count({
-      where: {
-        status: 'ACTIVE',
-        createdAt: {
-          lt: startDate
-        }
-      }
-    });
-
-    const churnedCustomers = await prisma.subscription.count({
-      where: {
-        status: 'CANCELLED',
-        canceledAt: {
-          gte: startDate,
-          lte: endDate
-        }
-      }
-    });
-
-    const churnRate = (churnedCustomers / (startingCustomers || 1)) * 100;
-
-    // Calculate growth
-    const previousActiveCount = await prisma.subscription.count({
-      where: {
-        status: 'ACTIVE',
-        createdAt: {
-          lt: startDate
-        }
-      }
-    });
-
-    const growth = this.calculateGrowth(activeSubscriptions, previousActiveCount);
-
     return {
-      totalSubscriptions,
-      activeSubscriptions,
-      canceledSubscriptions,
-      pausedSubscriptions,
-      averageSubscriptionValue,
-      churnRate,
-      growth
+      revenue: revenueMetrics,
+      customers: customerMetrics,
+      subscriptions: subscriptionMetrics
     };
   }
 
-  /**
-   * Get customer metrics
-   */
-  public async getCustomerSummary(period: AnalyticsPeriod): Promise<CustomerSummary> {
-    const { startDate, endDate } = period;
+  private async calculateRevenueMetrics(startDate: Date, endDate: Date) {
+    const [currentMRR, previousMRR] = await Promise.all([
+      this.calculateMRR(endDate),
+      this.calculateMRR(startDate)
+    ]);
 
-    // Get customer counts
-    const [totalCustomers, activeCustomers, newCustomers] = await Promise.all([
+    const growth = {
+      percentage: previousMRR > 0 ? ((currentMRR - previousMRR) / previousMRR) * 100 : 0,
+      trend: currentMRR > previousMRR ? 'up' as const : currentMRR < previousMRR ? 'down' as const : 'neutral' as const
+    };
+
+    // Calculate expansion and contraction revenue
+    const customerRevenue = await prisma.invoice.groupBy({
+      by: ['organizationId'],
+      where: {
+        createdAt: {
+          gte: startDate,
+          lte: endDate
+        },
+        status: 'PAID'
+      },
+      _sum: {
+        totalAmount: true
+      }
+    });
+
+    const previousPeriodRevenue = await prisma.invoice.groupBy({
+      by: ['organizationId'],
+      where: {
+        createdAt: {
+          gte: subMonths(startDate, 1),
+          lt: startDate
+        },
+        status: 'PAID'
+      },
+      _sum: {
+        totalAmount: true
+      }
+    });
+
+    let expansionRevenue = 0;
+    let contractionRevenue = 0;
+
+    customerRevenue.forEach(current => {
+      const previous = previousPeriodRevenue.find(p => p.organizationId === current.organizationId);
+      if (previous) {
+        const difference = (current._sum.totalAmount || 0) - (previous._sum.totalAmount || 0);
+        if (difference > 0) {
+          expansionRevenue += difference;
+        } else {
+          contractionRevenue += Math.abs(difference);
+        }
+      }
+    });
+
+    // Calculate retention rates
+    const totalRecurringRevenue = await prisma.invoice.aggregate({
+      where: {
+        createdAt: {
+          gte: startDate,
+          lte: endDate
+        },
+        status: 'PAID'
+      },
+      _sum: {
+        totalAmount: true
+      }
+    });
+
+    const netRevenueRetention = previousMRR > 0 ? (currentMRR / previousMRR) * 100 : 100;
+    const grossRevenueRetention = previousMRR > 0 ? 
+      ((currentMRR - expansionRevenue) / previousMRR) * 100 : 100;
+
+    return {
+      mrr: currentMRR,
+      arr: currentMRR * 12,
+      netRevenue: totalRecurringRevenue._sum.totalAmount || 0,
+      grossRevenue: (totalRecurringRevenue._sum.totalAmount || 0) + (contractionRevenue || 0),
+      growth,
+      expansionRevenue,
+      contractionRevenue,
+      netRevenueRetention,
+      grossRevenueRetention
+    };
+  }
+
+  private async calculateCustomerMetrics(startDate: Date, endDate: Date) {
+    const [
+      totalCustomers,
+      activeCustomers,
+      churnedCustomers,
+      newCustomers,
+      marketingCosts
+    ] = await Promise.all([
       prisma.organization.count(),
       prisma.organization.count({
         where: {
@@ -228,7 +176,112 @@ export class AnalyticsService {
       }),
       prisma.organization.count({
         where: {
+          subscriptions: {
+            every: {
+              status: 'CANCELED',
+              canceledAt: {
+                gte: startDate,
+                lte: endDate
+              }
+            }
+          }
+        }
+      }),
+      prisma.organization.count({
+        where: {
           createdAt: {
+            gte: startDate,
+            lte: endDate
+          }
+        }
+      }),
+      prisma.expense.aggregate({
+        where: {
+          category: 'MARKETING',
+          createdAt: {
+            gte: subMonths(endDate, 12)
+          }
+        },
+        _sum: {
+          amount: true
+        }
+      })
+    ]);
+
+    const totalRevenue = await prisma.invoice.aggregate({
+      where: {
+        status: 'PAID'
+      },
+      _sum: {
+        totalAmount: true
+      }
+    });
+
+    const acquisitionCost = newCustomers > 0 ? 
+      ((marketingCosts._sum.amount || 0) / newCustomers) : 0;
+
+    const lifetimeValue = activeCustomers > 0 ? 
+      ((totalRevenue._sum.totalAmount || 0) / activeCustomers) : 0;
+
+    // Calculate customer segmentation
+    const customersByPlan = await prisma.subscription.groupBy({
+      by: ['planId'],
+      where: {
+        status: 'ACTIVE'
+      },
+      _count: true
+    });
+
+    const segmentation = await Promise.all(
+      customersByPlan.map(async (segment) => {
+        const plan = await prisma.pricingPlan.findUnique({
+          where: { id: segment.planId }
+        });
+        return {
+          segment: plan?.name || 'Unknown',
+          count: segment._count,
+          percentage: (segment._count / activeCustomers) * 100
+        };
+      })
+    );
+
+    return {
+      total: totalCustomers,
+      active: activeCustomers,
+      churnedThisPeriod: churnedCustomers,
+      newThisPeriod: newCustomers,
+      acquisitionCost,
+      lifetimeValue,
+      segmentation
+    };
+  }
+
+  private async calculateSubscriptionMetrics(startDate: Date, endDate: Date) {
+    const [
+      activeSubscriptions,
+      trialingSubscriptions,
+      endedTrials,
+      convertedTrials
+    ] = await Promise.all([
+      prisma.subscription.count({
+        where: { status: 'ACTIVE' }
+      }),
+      prisma.subscription.count({
+        where: { status: 'TRIALING' }
+      }),
+      prisma.subscription.count({
+        where: {
+          status: 'CANCELED',
+          trialEndsAt: {
+            gte: startDate,
+            lte: endDate
+          }
+        }
+      }),
+      prisma.subscription.count({
+        where: {
+          status: 'ACTIVE',
+          trialEndsAt: {
             gte: startDate,
             lte: endDate
           }
@@ -236,117 +289,90 @@ export class AnalyticsService {
       })
     ]);
 
-    const inactiveCustomers = totalCustomers - activeCustomers;
+    const totalTrials = endedTrials + convertedTrials;
+    const conversionRate = totalTrials > 0 ? (convertedTrials / totalTrials) * 100 : 0;
 
-    // Calculate customer lifetime value
-    const allPayments = await prisma.payment.findMany({
+    // Calculate churn rate
+    const startingSubscriptions = await prisma.subscription.count({
       where: {
-        status: PaymentStatus.COMPLETED
-      },
-      include: {
-        refunds: true
-      }
-    });
-
-    const netRevenue = allPayments.reduce((sum, payment) => {
-      const refunds = payment.refunds.reduce((r, refund) => r + refund.amount, 0);
-      return sum + (payment.amount - refunds);
-    }, 0);
-
-    const customerLifetimeValue = netRevenue / (totalCustomers || 1);
-
-    // Calculate growth
-    const previousActiveCount = await prisma.organization.count({
-      where: {
-        subscriptions: {
-          some: {
-            status: 'ACTIVE',
-            createdAt: {
-              lt: startDate
-            }
-          }
+        createdAt: {
+          lt: startDate
+        },
+        status: {
+          in: ['ACTIVE', 'TRIALING']
         }
       }
     });
 
-    const growth = this.calculateGrowth(activeCustomers, previousActiveCount);
-
-    return {
-      totalCustomers,
-      activeCustomers,
-      inactiveCustomers,
-      newCustomers,
-      customerLifetimeValue,
-      growth
-    };
-  }
-
-  /**
-   * Get usage metrics
-   */
-  public async getUsageSummary(period: AnalyticsPeriod): Promise<UsageSummary> {
-    const { startDate, endDate } = period;
-
-    // Get all usage records
-    const usageRecords = await prisma.usageRecord.findMany({
+    const churnedSubscriptions = await prisma.subscription.count({
       where: {
-        recordedAt: {
+        status: 'CANCELED',
+        canceledAt: {
           gte: startDate,
           lte: endDate
         }
+      }
+    });
+
+    const churnRate = startingSubscriptions > 0 ? 
+      (churnedSubscriptions / startingSubscriptions) * 100 : 0;
+
+    // Calculate average subscription value
+    const subscriptionRevenue = await prisma.subscription.aggregate({
+      where: {
+        status: 'ACTIVE'
       },
-      include: {
-        feature: true
+      _avg: {
+        price: true
       }
     });
 
-    // Calculate total usage and usage by feature
-    const usageByFeature: Record<string, number> = {};
-    let totalUsage = 0;
-
-    for (const record of usageRecords) {
-      const featureName = record.feature.name;
-      if (!usageByFeature[featureName]) {
-        usageByFeature[featureName] = 0;
-      }
-      usageByFeature[featureName] += record.quantity;
-      totalUsage += record.quantity;
-    }
-
-    // Calculate overage charges
-    const overageCharges = await this.calculateOverageCharges(period);
-
-    // Calculate utilization rate
-    const subscriptions = await prisma.subscription.findMany({
-      where: { status: 'ACTIVE' },
-      include: {
-        plan: {
-          include: {
-            planFeatures: true
-          }
-        }
-      }
+    // Get subscription distribution
+    const subscriptionsByPlan = await prisma.subscription.groupBy({
+      by: ['planId'],
+      where: {
+        status: 'ACTIVE'
+      },
+      _count: true
     });
 
-    let totalUtilization = 0;
-    let featureCount = 0;
+    const byPlan = await Promise.all(
+      subscriptionsByPlan.map(async (plan) => {
+        const planDetails = await prisma.pricingPlan.findUnique({
+          where: { id: plan.planId }
+        });
+        return {
+          plan: planDetails?.name || 'Unknown',
+          count: plan._count,
+          percentage: (plan._count / activeSubscriptions) * 100
+        };
+      })
+    );
 
-    for (const subscription of subscriptions) {
-      for (const planFeature of subscription.plan.planFeatures) {
-        const usage = usageByFeature[planFeature.feature.name] || 0;
-        const limit = planFeature.usageLimit || 1;
-        totalUtilization += (usage / limit) * 100;
-        featureCount++;
-      }
-    }
+    const subscriptionsByBillingCycle = await prisma.subscription.groupBy({
+      by: ['billingCycle'],
+      where: {
+        status: 'ACTIVE'
+      },
+      _count: true
+    });
 
-    const utilizationRate = totalUtilization / (featureCount || 1);
+    const byBillingCycle = subscriptionsByBillingCycle.map(cycle => ({
+      cycle: cycle.billingCycle,
+      count: cycle._count,
+      percentage: (cycle._count / activeSubscriptions) * 100
+    }));
 
     return {
-      totalUsage,
-      usageByFeature,
-      overageCharges,
-      utilizationRate
+      active: activeSubscriptions,
+      trialing: trialingSubscriptions,
+      churnRate,
+      conversionRate,
+      averageValue: subscriptionRevenue._avg.price || 0,
+      distribution: {
+        byPlan,
+        byBillingCycle
+      }
     };
   }
 
@@ -368,89 +394,29 @@ export class AnalyticsService {
 
     return activeSubscriptions.reduce((sum, subscription) => {
       const monthlyPrice = this.normalizeToMonthlyPrice(
-        subscription.plan.basePrice,
-        subscription.plan.billingInterval
+        subscription.plan.price,
+        subscription.plan.interval
       );
       return sum + (monthlyPrice * (subscription.quantity || 1));
     }, 0);
   }
 
   /**
-   * Calculate total revenue for a period
-   */
-  private async calculateTotalRevenue(period: AnalyticsPeriod): Promise<number> {
-    const payments = await prisma.payment.findMany({
-      where: {
-        status: PaymentStatus.COMPLETED,
-        createdAt: {
-          gte: period.startDate,
-          lte: period.endDate
-        }
-      },
-      include: {
-        refunds: true
-      }
-    });
-
-    return payments.reduce((sum, payment) => {
-      const refunds = payment.refunds.reduce((r, refund) => r + refund.amount, 0);
-      return sum + (payment.amount - refunds);
-    }, 0);
-  }
-
-  /**
-   * Calculate overage charges for a period
-   */
-  private async calculateOverageCharges(period: AnalyticsPeriod): Promise<number> {
-    const overagePayments = await prisma.payment.findMany({
-      where: {
-        status: PaymentStatus.COMPLETED,
-        createdAt: {
-          gte: period.startDate,
-          lte: period.endDate
-        },
-        metadata: {
-          path: ['type'],
-          equals: 'overage'
-        }
-      }
-    });
-
-    return overagePayments.reduce((sum, payment) => sum + payment.amount, 0);
-  }
-
-  /**
-   * Calculate growth percentage and trend
-   */
-  private calculateGrowth(current: number, previous: number): {
-    percentage: number;
-    trend: 'up' | 'down' | 'neutral';
-  } {
-    if (previous === 0) {
-      return {
-        percentage: current > 0 ? 100 : 0,
-        trend: current > 0 ? 'up' : 'neutral'
-      };
-    }
-
-    const percentage = ((current - previous) / previous) * 100;
-    return {
-      percentage: Math.abs(percentage),
-      trend: percentage > 0 ? 'up' : percentage < 0 ? 'down' : 'neutral'
-    };
-  }
-
-  /**
    * Normalize price to monthly basis
    */
   private normalizeToMonthlyPrice(price: number, interval: string): number {
-    switch (interval) {
+    switch (interval.toLowerCase()) {
+      case 'year':
       case 'yearly':
         return price / 12;
+      case 'quarter':
       case 'quarterly':
         return price / 3;
+      case 'week':
       case 'weekly':
         return price * 4;
+      case 'month':
+      case 'monthly':
       default:
         return price;
     }

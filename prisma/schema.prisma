@@ -1320,3 +1320,66 @@ model AggregatedUsage {
   @@index([metricId, period])
   @@index([period])
 }
+
+// Analytics specific models
+model AnalyticsSnapshot {
+  id          String    @id @default(cuid())
+  timestamp   DateTime  @default(now())
+  metrics     Json      // Stores the complete metrics snapshot
+  type        String    // daily, weekly, monthly
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([timestamp])
+  @@index([type])
+  @@map("analytics_snapshots")
+}
+
+model RevenueMetrics {
+  id                    String   @id @default(cuid())
+  date                  DateTime @default(now())
+  mrr                   Float
+  arr                   Float
+  netRevenue            Float
+  grossRevenue          Float
+  refunds               Float
+  churnedRevenue        Float
+  expansionRevenue      Float
+  newBusinessRevenue    Float
+  organizationId        String
+  organization          Organization @relation(fields: [organizationId], references: [id])
+  currency              String   @default("USD")
+
+  @@index([date])
+  @@index([organizationId])
+  @@map("revenue_metrics")
+}
+
+model CustomerMetrics {
+  id                    String   @id @default(cuid())
+  date                  DateTime @default(now())
+  totalCustomers        Int
+  activeCustomers       Int
+  churnedCustomers      Int
+  newCustomers          Int
+  reactivatedCustomers  Int
+  organizationId        String
+  organization          Organization @relation(fields: [organizationId], references: [id])
+  
+  @@index([date])
+  @@index([organizationId])
+  @@map("customer_metrics")
+}
+
+model CohortAnalysis {
+  id                String   @id @default(cuid())
+  cohortDate        DateTime
+  retentionData     Json     // Stores retention percentages by period
+  revenueData       Json     // Stores revenue retention by period
+  organizationId    String
+  organization      Organization @relation(fields: [organizationId], references: [id])
+  
+  @@index([cohortDate])
+  @@index([organizationId])
+  @@map("cohort_analysis")
+}

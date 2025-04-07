@@ -2,67 +2,107 @@
 
 import { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
-import { realTimeMetricsService, RealTimeMetrics } from '@/lib/services/real-time-metrics';
-import { HistoricalMetrics } from '@/components/admin/HistoricalMetrics';
-import { exportMetricsAsCSV, exportMetricsAsPDF } from '@/utils/export-metrics';
 import { Button } from '@/components/ui/button';
-import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  AreaChart, Area
-} from 'recharts';
-import { CurrencyService } from '@/lib/currency';
-import { DollarSign, TrendingUp, Users, AlertTriangle } from 'lucide-react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { AlertTriangle } from 'lucide-react';
+import AnalyticsSummary from './components/AnalyticsSummary';
+import CustomerOverview from './components/CustomerOverview';
+import SubscriptionMetrics from './components/SubscriptionMetrics';
+import { useRouter } from 'next/navigation';
 
 export default function AdminDashboard() {
   const { data: session, status } = useSession();
-  const [metrics, setMetrics] = useState<RealTimeMetrics | null>(null);
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState('overview');
+
+  // Analytics data
+  const [analyticsData, setAnalyticsData] = useState({
+    metrics: {
+      mrr: 0,
+      arr: 0,
+      activeSubscriptions: 0,
+      churnRate: 0,
+    },
+    revenueData: [],
+  });
+
+  // Subscription data
+  const [subscriptionData, setSubscriptionData] = useState({
+    planDistribution: [],
+    churnData: [],
+    totalSubscriptions: 0,
+    activeTrials: 0,
+  });
+
+  // Customer data
+  const [customers, setCustomers] = useState([]);
 
   useEffect(() => {
-    if (status === 'authenticated' && session?.user.role !== 'admin') {
-      setError('Access denied. You do not have permission to view this page.');
+    if (status === 'authenticated') {
+      if (session?.user?.role !== 'admin') {
+        setError('Access denied. You do not have permission to view this page.');
+        return;
+      }
+      fetchDashboardData();
     }
   }, [status, session]);
 
-  useEffect(() => {
-    const handleMetricsUpdate = (newMetrics: RealTimeMetrics) => {
-      setMetrics(newMetrics);
-      setLoading(false);
+  const fetchDashboardData = async () => {
+    try {
+      setLoading(true);
+      const [analyticsResponse, subscriptionsResponse, customersResponse] = await Promise.all([
+        fetch('/api/admin/analytics/dashboard'),
+        fetch('/api/admin/subscriptions/metrics'),
+        fetch('/api/admin/customers?limit=10'),
+      ]);
+
+      if (!analyticsResponse.ok || !subscriptionsResponse.ok || !customersResponse.ok) {
+        throw new Error('Failed to fetch dashboard data');
+      }
+
+      const [analytics, subscriptions, customerData] = await Promise.all([
+        analyticsResponse.json(),
+        subscriptionsResponse.json(),
+        customersResponse.json(),
+      ]);
+
+      setAnalyticsData(analytics);
+      setSubscriptionData(subscriptions);
+      setCustomers(customerData.customers);
       setError(null);
-    };
-
-    const handleError = (error: Error) => {
-      setError(error.message || 'Failed to update metrics');
-      // Don't set loading to false here to show stale data if available
-    };
-
-    realTimeMetricsService.onMetricsUpdate(handleMetricsUpdate);
-    realTimeMetricsService.onError(handleError);
-    realTimeMetricsService.startUpdates(30000);
-
-    return () => {
-      realTimeMetricsService.stopUpdates();
-      realTimeMetricsService.removeListener(handleMetricsUpdate);
-      realTimeMetricsService.removeErrorListener(handleError);
-    };
-  }, []);
-
-  const handleExportCSV = () => {
-    if (metrics) {
-      exportMetricsAsCSV([metrics], 'admin-metrics.csv');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to fetch dashboard data');
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleExportPDF = () => {
-    if (metrics) {
-      exportMetricsAsPDF([metrics], 'admin-metrics.pdf');
+  const handleCustomerDetails = (customerId: string) => {
+    router.push(`/admin/customers/${customerId}`);
+  };
+
+  const handleExport = async (format: 'csv' | 'pdf') => {
+    try {
+      const response = await fetch(`/api/admin/analytics/export?format=${format}`);
+      if (!response.ok) throw new Error('Export failed');
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `analytics-export.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Export failed');
     }
   };
 
-  if (status === 'loading') {
+  if (status === 'loading' || loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
@@ -81,133 +121,50 @@ export default function AdminDashboard() {
     );
   }
 
-  if (loading && !metrics) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
-      </div>
-    );
-  }
-
   return (
     <div className="container mx-auto p-6">
-      <h1 className="text-3xl font-bold mb-6">Admin Dashboard</h1>
-
-      {error && (
-        <Alert variant="destructive" className="mb-6">
-          <AlertTriangle className="h-4 w-4" />
-          <AlertTitle>Error</AlertTitle>
-          <AlertDescription>{error}</AlertDescription>
-          <Button onClick={() => realTimeMetricsService.startUpdates()} className="mt-4">
-            Retry
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-3xl font-bold">Admin Dashboard</h1>
+        <div className="space-x-2">
+          <Button onClick={() => handleExport('csv')} variant="outline">
+            Export CSV
           </Button>
-        </Alert>
-      )}
-
-      {/* Export Buttons */}
-      <div className="flex justify-end mb-6">
-        <Button onClick={handleExportCSV} className="mr-2">
-          Export as CSV
-        </Button>
-        <Button onClick={handleExportPDF} variant="secondary">
-          Export as PDF
-        </Button>
+          <Button onClick={() => handleExport('pdf')}>
+            Export PDF
+          </Button>
+        </div>
       </div>
 
-      {/* Key Metrics Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Monthly Recurring Revenue</CardTitle>
-            <DollarSign className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{CurrencyService.formatCurrency(metrics?.mrr || 0, 'USD')}</div>
-            <p className={metrics?.revenue.growth && metrics.revenue.growth >= 0 ? "text-green-500 text-sm" : "text-red-500 text-sm"}>
-              {metrics?.revenue.growth ? `${metrics.revenue.growth >= 0 ? '+' : ''}${metrics.revenue.growth.toFixed(1)}%` : '0%'}
-            </p>
-          </CardContent>
-        </Card>
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+        <TabsList>
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="customers">Customers</TabsTrigger>
+          <TabsTrigger value="subscriptions">Subscriptions</TabsTrigger>
+        </TabsList>
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Active Subscriptions</CardTitle>
-            <TrendingUp className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{metrics?.activeSubscriptions || 0}</div>
-            <p className="text-muted-foreground text-sm">
-              {metrics?.churnRate ? `${metrics.churnRate.toFixed(1)}% churn rate` : '0% churn rate'}
-            </p>
-          </CardContent>
-        </Card>
+        <TabsContent value="overview" className="space-y-6">
+          <AnalyticsSummary
+            metrics={analyticsData.metrics}
+            revenueData={analyticsData.revenueData}
+          />
+        </TabsContent>
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Customer Lifetime Value</CardTitle>
-            <Users className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{CurrencyService.formatCurrency(metrics?.ltv || 0, 'USD')}</div>
-            <p className="text-muted-foreground text-sm">Per customer average</p>
-          </CardContent>
-        </Card>
-      </div>
+        <TabsContent value="customers">
+          <CustomerOverview
+            customers={customers}
+            onViewDetails={handleCustomerDetails}
+          />
+        </TabsContent>
 
-      {/* Charts Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Revenue Trend</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="h-[300px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart
-                  data={[
-                    { name: 'Previous', value: metrics?.revenue.monthly || 0 },
-                    { name: 'Current', value: metrics?.revenue.monthly || 0 },
-                  ]}
-                >
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="name" />
-                  <YAxis />
-                  <Tooltip formatter={(value) => CurrencyService.formatCurrency(Number(value), 'USD')} />
-                  <Area type="monotone" dataKey="value" stroke="#8884d8" fill="#8884d8" fillOpacity={0.3} />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Customer Growth</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="h-[300px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart
-                  data={[
-                    { name: 'Total', value: metrics?.customers.total || 0 },
-                    { name: 'Active', value: metrics?.customers.active || 0 },
-                    { name: 'New', value: metrics?.customers.new || 0 },
-                  ]}
-                >
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="name" />
-                  <YAxis />
-                  <Tooltip />
-                  <Line type="monotone" dataKey="value" stroke="#82ca9d" />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-      
-      {/* Historical Metrics Section */}
-      <HistoricalMetrics />
+        <TabsContent value="subscriptions">
+          <SubscriptionMetrics
+            planDistribution={subscriptionData.planDistribution}
+            churnData={subscriptionData.churnData}
+            totalSubscriptions={subscriptionData.totalSubscriptions}
+            activeTrials={subscriptionData.activeTrials}
+          />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

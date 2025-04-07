@@ -1,3 +1,4 @@
+
 import { stripe } from '@/lib/stripe';
 import { prisma } from '@/lib/prisma';
 import { 
@@ -407,6 +408,127 @@ export class SubscriptionService {
     }
   }
 
+  /**
+   * Update subscription with proration handling
+   */
+  public async updateSubscription({
+    subscriptionId,
+    newPlanId,
+    quantity = 1,
+    prorate = true
+  }: {
+    subscriptionId: string;
+    newPlanId: string;
+    quantity?: number;
+    prorate?: boolean;
+  }): Promise<{ success: boolean; subscription?: SubscriptionWithDetails; error?: string }> {
+    try {
+      // Get current subscription details
+      const subscription = await prisma.subscription.findUnique({
+        where: { id: subscriptionId },
+        include: {
+          plan: true,
+          organization: true
+        }
+      });
+
+      if (!subscription) {
+        return { success: false, error: 'Subscription not found' };
+      }
+
+      // Get new plan details
+      const newPlan = await prisma.pricingPlan.findUnique({
+        where: { id: newPlanId }
+      });
+
+      if (!newPlan) {
+        return { success: false, error: 'New plan not found' };
+      }
+
+      // Calculate impact of the change
+      const impact = await this.calculatePlanChangeImpact(subscriptionId, newPlanId, quantity);
+      
+      // Determine if this is an upgrade, downgrade, or crossgrade
+      const isUpgrade = impact.type === 'upgrade';
+      const isDowngrade = impact.type === 'downgrade';
+      
+      // Handle immediate change or schedule for next billing period
+      const effectiveDate = prorate ? new Date() : subscription.currentPeriodEnd;
+      
+      // If using Stripe, update the subscription there
+      if (subscription.stripeSubscriptionId) {
+        const stripeParams: any = {
+          proration_behavior: prorate ? 'create_prorations' : 'none',
+          items: [{
+            id: subscription.stripeSubscriptionId,
+            price: newPlan.stripeId,
+            quantity
+          }]
+        };
+        
+        // For downgrades without proration, schedule the update
+        if (isDowngrade && !prorate) {
+          stripeParams.proration_behavior = 'none';
+          stripeParams.trial_end = Math.floor(subscription.currentPeriodEnd.getTime() / 1000);
+        }
+        
+        await stripe.subscriptions.update(subscription.stripeSubscriptionId, stripeParams);
+      }
+      
+      // Update subscription in database
+      const updatedSubscription = await prisma.subscription.update({
+        where: { id: subscriptionId },
+        data: {
+          planId: newPlanId,
+          quantity,
+          updatedAt: new Date(),
+          ...(isDowngrade && !prorate ? {} : { planId: newPlanId })
+        },
+        include: {
+          plan: true,
+          organization: true
+        }
+      });
+      
+      // If preserving usage data is needed, transfer it
+      if (isUpgrade || (isDowngrade && prorate)) {
+        await this.transferUsage(subscription as SubscriptionWithDetails, newPlan);
+      }
+      
+      // Create an event for the plan change
+      await createEvent({
+        type: `SUBSCRIPTION_${impact.type.toUpperCase()}`,
+        resourceType: 'SUBSCRIPTION',
+        resourceId: subscriptionId,
+        organizationId: subscription.organizationId,
+        metadata: {
+          oldPlanId: subscription.planId,
+          newPlanId,
+          effectiveDate,
+          proration: prorate,
+          proratedAmount: impact.proratedAmount
+        }
+      });
+      
+      // Send notification email
+      await sendSubscriptionEmail({
+        type: `plan_${impact.type}`,
+        subscription: updatedSubscription as SubscriptionWithDetails,
+        metadata: {
+          oldPlan: subscription.plan.name,
+          newPlan: newPlan.name,
+          effectiveDate,
+          featureChanges: impact.featureChanges
+        }
+      });
+      
+      return { success: true, subscription: updatedSubscription as SubscriptionWithDetails };
+    } catch (error) {
+      console.error('Error updating subscription:', error);
+      return { success: false, error: 'Failed to update subscription' };
+    }
+  }
+  
   /**
    * Calculate plan change impact
    */

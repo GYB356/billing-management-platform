@@ -1,244 +1,295 @@
-/*
-  Warnings:
+-- Create types if they don't exist
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'userrole') THEN
+        CREATE TYPE "UserRole" AS ENUM ('ADMIN', 'USER', 'SUPER_ADMIN', 'STAFF');
+    END IF;
 
-  - You are about to drop the `Account` table. If the table is not empty, all the data it contains will be lost.
-  - You are about to drop the `Session` table. If the table is not empty, all the data it contains will be lost.
-  - You are about to drop the `Subscription` table. If the table is not empty, all the data it contains will be lost.
-  - You are about to drop the `User` table. If the table is not empty, all the data it contains will be lost.
-  - You are about to drop the `VerificationToken` table. If the table is not empty, all the data it contains will be lost.
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'userstatus') THEN
+        CREATE TYPE "UserStatus" AS ENUM ('ACTIVE', 'INACTIVE', 'SUSPENDED', 'PENDING_VERIFICATION');
+    END IF;
 
-*/
--- CreateEnum
-CREATE TYPE "UserRole" AS ENUM ('ADMIN', 'USER');
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'organizationrole') THEN
+        CREATE TYPE "OrganizationRole" AS ENUM ('OWNER', 'ADMIN', 'MEMBER');
+    END IF;
 
--- CreateEnum
-CREATE TYPE "UserStatus" AS ENUM ('ACTIVE', 'INACTIVE', 'SUSPENDED');
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'billinginterval') THEN
+        CREATE TYPE "BillingInterval" AS ENUM ('MONTHLY', 'YEARLY');
+    END IF;
 
--- CreateEnum
-CREATE TYPE "OrganizationRole" AS ENUM ('OWNER', 'ADMIN', 'MEMBER');
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'subscriptionstatus') THEN
+        CREATE TYPE "SubscriptionStatus" AS ENUM ('ACTIVE', 'PAST_DUE', 'CANCELED', 'INCOMPLETE', 'INCOMPLETE_EXPIRED', 'TRIALING', 'UNPAID', 'PAUSED', 'ENDED');
+    END IF;
 
--- CreateEnum
-CREATE TYPE "BillingInterval" AS ENUM ('MONTHLY', 'YEARLY');
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'invoicestatus') THEN
+        CREATE TYPE "InvoiceStatus" AS ENUM ('DRAFT', 'OPEN', 'PAID', 'UNCOLLECTIBLE', 'VOID');
+    END IF;
 
--- CreateEnum
-CREATE TYPE "SubscriptionStatus" AS ENUM ('ACTIVE', 'PAST_DUE', 'CANCELED', 'INCOMPLETE', 'INCOMPLETE_EXPIRED', 'TRIALING', 'UNPAID');
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'transactionstatus') THEN
+        CREATE TYPE "TransactionStatus" AS ENUM ('PENDING', 'SUCCEEDED', 'FAILED', 'REFUNDED');
+    END IF;
 
--- CreateEnum
-CREATE TYPE "InvoiceStatus" AS ENUM ('DRAFT', 'OPEN', 'PAID', 'UNCOLLECTIBLE', 'VOID');
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'notificationtype') THEN
+        CREATE TYPE "NotificationType" AS ENUM ('INFO', 'SUCCESS', 'WARNING', 'ERROR');
+    END IF;
+END
+$$;
 
--- CreateEnum
-CREATE TYPE "TransactionStatus" AS ENUM ('PENDING', 'SUCCEEDED', 'FAILED', 'REFUNDED');
+-- Create tables if they don't exist
+-- Users table
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'users') THEN
+        CREATE TABLE "users" (
+            "id" TEXT NOT NULL,
+            "name" TEXT,
+            "email" TEXT NOT NULL,
+            "emailVerified" TIMESTAMP(3),
+            "image" TEXT,
+            "password" TEXT,
+            "role" "UserRole" NOT NULL DEFAULT 'USER',
+            "status" "UserStatus" NOT NULL DEFAULT 'ACTIVE',
+            "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            "updatedAt" TIMESTAMP(3) NOT NULL,
+            "metadata" JSONB DEFAULT '{}',
+            "stripeCustomerId" TEXT,
 
--- CreateEnum
-CREATE TYPE "NotificationType" AS ENUM ('INFO', 'SUCCESS', 'WARNING', 'ERROR');
+            CONSTRAINT "users_pkey" PRIMARY KEY ("id")
+        );
+    END IF;
+END
+$$;
 
--- DropForeignKey
-ALTER TABLE "Account" DROP CONSTRAINT "Account_userId_fkey";
+-- Accounts table
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'accounts') THEN
+        CREATE TABLE "accounts" (
+            "id" TEXT NOT NULL,
+            "userId" TEXT NOT NULL,
+            "type" TEXT NOT NULL,
+            "provider" TEXT NOT NULL,
+            "providerAccountId" TEXT NOT NULL,
+            "refresh_token" TEXT,
+            "access_token" TEXT,
+            "expires_at" INTEGER,
+            "token_type" TEXT,
+            "scope" TEXT,
+            "id_token" TEXT,
+            "session_state" TEXT,
 
--- DropForeignKey
-ALTER TABLE "Session" DROP CONSTRAINT "Session_userId_fkey";
+            CONSTRAINT "accounts_pkey" PRIMARY KEY ("id")
+        );
+    END IF;
+END
+$$;
 
--- DropForeignKey
-ALTER TABLE "Subscription" DROP CONSTRAINT "Subscription_userId_fkey";
+-- Sessions table
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'sessions') THEN
+        CREATE TABLE "sessions" (
+            "id" TEXT NOT NULL,
+            "sessionToken" TEXT NOT NULL,
+            "userId" TEXT NOT NULL,
+            "expires" TIMESTAMP(3) NOT NULL,
 
--- DropTable
-DROP TABLE "Account";
+            CONSTRAINT "sessions_pkey" PRIMARY KEY ("id")
+        );
+    END IF;
+END
+$$;
 
--- DropTable
-DROP TABLE "Session";
+-- Verification tokens table
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'verification_tokens') THEN
+        CREATE TABLE "verification_tokens" (
+            "identifier" TEXT NOT NULL,
+            "token" TEXT NOT NULL,
+            "expires" TIMESTAMP(3) NOT NULL
+        );
+    END IF;
+END
+$$;
 
--- DropTable
-DROP TABLE "Subscription";
+-- Organizations table
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'organizations') THEN
+        CREATE TABLE "organizations" (
+            "id" TEXT NOT NULL,
+            "name" TEXT NOT NULL,
+            "taxId" TEXT,
+            "email" TEXT,
+            "phone" TEXT,
+            "website" TEXT,
+            "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            "updatedAt" TIMESTAMP(3) NOT NULL,
+            "settings" JSONB DEFAULT '{}',
+            "stripeCustomerId" TEXT,
 
--- DropTable
-DROP TABLE "User";
+            CONSTRAINT "organizations_pkey" PRIMARY KEY ("id")
+        );
+    END IF;
+END
+$$;
 
--- DropTable
-DROP TABLE "VerificationToken";
+-- User Organizations table
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'user_organizations') THEN
+        CREATE TABLE "user_organizations" (
+            "id" TEXT NOT NULL,
+            "userId" TEXT NOT NULL,
+            "organizationId" TEXT NOT NULL,
+            "role" "OrganizationRole" NOT NULL DEFAULT 'MEMBER',
+            "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            "updatedAt" TIMESTAMP(3) NOT NULL,
 
--- CreateTable
-CREATE TABLE "users" (
-    "id" TEXT NOT NULL,
-    "name" TEXT,
-    "email" TEXT NOT NULL,
-    "emailVerified" TIMESTAMP(3),
-    "image" TEXT,
-    "password" TEXT,
-    "role" "UserRole" NOT NULL DEFAULT 'USER',
-    "status" "UserStatus" NOT NULL DEFAULT 'ACTIVE',
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
-    "metadata" JSONB DEFAULT '{}',
-    "stripeCustomerId" TEXT,
+            CONSTRAINT "user_organizations_pkey" PRIMARY KEY ("id")
+        );
+    END IF;
+END
+$$;
 
-    CONSTRAINT "users_pkey" PRIMARY KEY ("id")
-);
+-- Products table
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'products') THEN
+        CREATE TABLE "products" (
+            "id" TEXT NOT NULL,
+            "name" TEXT NOT NULL,
+            "description" TEXT,
+            "active" BOOLEAN NOT NULL DEFAULT true,
+            "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            "updatedAt" TIMESTAMP(3) NOT NULL,
+            "metadata" JSONB DEFAULT '{}',
+            "stripeId" TEXT,
 
--- CreateTable
-CREATE TABLE "accounts" (
-    "id" TEXT NOT NULL,
-    "userId" TEXT NOT NULL,
-    "type" TEXT NOT NULL,
-    "provider" TEXT NOT NULL,
-    "providerAccountId" TEXT NOT NULL,
-    "refresh_token" TEXT,
-    "access_token" TEXT,
-    "expires_at" INTEGER,
-    "token_type" TEXT,
-    "scope" TEXT,
-    "id_token" TEXT,
-    "session_state" TEXT,
+            CONSTRAINT "products_pkey" PRIMARY KEY ("id")
+        );
+    END IF;
+END
+$$;
 
-    CONSTRAINT "accounts_pkey" PRIMARY KEY ("id")
-);
+-- Pricing Plans table
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'pricing_plans') THEN
+        CREATE TABLE "pricing_plans" (
+            "id" TEXT NOT NULL,
+            "productId" TEXT NOT NULL,
+            "name" TEXT NOT NULL,
+            "description" TEXT,
+            "interval" "BillingInterval" NOT NULL,
+            "price" INTEGER NOT NULL,
+            "currency" TEXT NOT NULL DEFAULT 'USD',
+            "active" BOOLEAN NOT NULL DEFAULT true,
+            "trialDays" INTEGER NOT NULL DEFAULT 0,
+            "features" JSONB DEFAULT '{}',
+            "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            "updatedAt" TIMESTAMP(3) NOT NULL,
+            "stripeId" TEXT,
 
--- CreateTable
-CREATE TABLE "sessions" (
-    "id" TEXT NOT NULL,
-    "sessionToken" TEXT NOT NULL,
-    "userId" TEXT NOT NULL,
-    "expires" TIMESTAMP(3) NOT NULL,
+            CONSTRAINT "pricing_plans_pkey" PRIMARY KEY ("id")
+        );
+    END IF;
+END
+$$;
 
-    CONSTRAINT "sessions_pkey" PRIMARY KEY ("id")
-);
+-- Subscriptions table
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'subscriptions') THEN
+        CREATE TABLE "subscriptions" (
+            "id" TEXT NOT NULL,
+            "organizationId" TEXT NOT NULL,
+            "planId" TEXT NOT NULL,
+            "status" "SubscriptionStatus" NOT NULL,
+            "currentPeriodStart" TIMESTAMP(3) NOT NULL,
+            "currentPeriodEnd" TIMESTAMP(3) NOT NULL,
+            "cancelAtPeriodEnd" BOOLEAN NOT NULL DEFAULT false,
+            "canceledAt" TIMESTAMP(3),
+            "trialStart" TIMESTAMP(3),
+            "trialEnd" TIMESTAMP(3),
+            "stripeId" TEXT,
+            "metadata" JSONB DEFAULT '{}',
+            "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            "updatedAt" TIMESTAMP(3) NOT NULL,
 
--- CreateTable
-CREATE TABLE "verification_tokens" (
-    "identifier" TEXT NOT NULL,
-    "token" TEXT NOT NULL,
-    "expires" TIMESTAMP(3) NOT NULL
-);
+            CONSTRAINT "subscriptions_pkey" PRIMARY KEY ("id")
+        );
+    END IF;
+END
+$$;
 
--- CreateTable
-CREATE TABLE "organizations" (
-    "id" TEXT NOT NULL,
-    "name" TEXT NOT NULL,
-    "address" TEXT,
-    "taxId" TEXT,
-    "email" TEXT,
-    "phone" TEXT,
-    "website" TEXT,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
-    "settings" JSONB DEFAULT '{}',
-    "stripeCustomerId" TEXT,
+-- Invoices table
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'invoices') THEN
+        CREATE TABLE "invoices" (
+            "id" TEXT NOT NULL,
+            "organizationId" TEXT NOT NULL,
+            "subscriptionId" TEXT,
+            "number" TEXT,
+            "amount" INTEGER NOT NULL,
+            "currency" TEXT NOT NULL DEFAULT 'USD',
+            "status" "InvoiceStatus" NOT NULL,
+            "dueDate" TIMESTAMP(3) NOT NULL,
+            "paidDate" TIMESTAMP(3),
+            "stripeId" TEXT,
+            "pdf" TEXT,
+            "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            "updatedAt" TIMESTAMP(3) NOT NULL,
 
-    CONSTRAINT "organizations_pkey" PRIMARY KEY ("id")
-);
+            CONSTRAINT "invoices_pkey" PRIMARY KEY ("id")
+        );
+    END IF;
+END
+$$;
 
--- CreateTable
-CREATE TABLE "user_organizations" (
-    "id" TEXT NOT NULL,
-    "userId" TEXT NOT NULL,
-    "organizationId" TEXT NOT NULL,
-    "role" "OrganizationRole" NOT NULL DEFAULT 'MEMBER',
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
+-- Transactions table
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'transactions') THEN
+        CREATE TABLE "transactions" (
+            "id" TEXT NOT NULL,
+            "invoiceId" TEXT NOT NULL,
+            "amount" INTEGER NOT NULL,
+            "currency" TEXT NOT NULL DEFAULT 'USD',
+            "status" "TransactionStatus" NOT NULL,
+            "paymentMethod" TEXT,
+            "stripeId" TEXT,
+            "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            "updatedAt" TIMESTAMP(3) NOT NULL,
 
-    CONSTRAINT "user_organizations_pkey" PRIMARY KEY ("id")
-);
+            CONSTRAINT "transactions_pkey" PRIMARY KEY ("id")
+        );
+    END IF;
+END
+$$;
 
--- CreateTable
-CREATE TABLE "products" (
-    "id" TEXT NOT NULL,
-    "name" TEXT NOT NULL,
-    "description" TEXT,
-    "active" BOOLEAN NOT NULL DEFAULT true,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
-    "metadata" JSONB DEFAULT '{}',
-    "stripeId" TEXT,
+-- Events table
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'events') THEN
+        CREATE TABLE "events" (
+            "id" TEXT NOT NULL,
+            "userId" TEXT,
+            "organizationId" TEXT,
+            "eventType" TEXT NOT NULL,
+            "resourceType" TEXT NOT NULL,
+            "resourceId" TEXT NOT NULL,
+            "severity" TEXT NOT NULL DEFAULT 'INFO',
+            "metadata" JSONB DEFAULT '{}',
+            "timestamp" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-    CONSTRAINT "products_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
-CREATE TABLE "pricing_plans" (
-    "id" TEXT NOT NULL,
-    "productId" TEXT NOT NULL,
-    "name" TEXT NOT NULL,
-    "description" TEXT,
-    "interval" "BillingInterval" NOT NULL,
-    "price" INTEGER NOT NULL,
-    "currency" TEXT NOT NULL DEFAULT 'USD',
-    "active" BOOLEAN NOT NULL DEFAULT true,
-    "trialDays" INTEGER NOT NULL DEFAULT 0,
-    "features" JSONB DEFAULT '{}',
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
-    "stripeId" TEXT,
-
-    CONSTRAINT "pricing_plans_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
-CREATE TABLE "subscriptions" (
-    "id" TEXT NOT NULL,
-    "organizationId" TEXT NOT NULL,
-    "planId" TEXT NOT NULL,
-    "status" "SubscriptionStatus" NOT NULL,
-    "currentPeriodStart" TIMESTAMP(3) NOT NULL,
-    "currentPeriodEnd" TIMESTAMP(3) NOT NULL,
-    "cancelAtPeriodEnd" BOOLEAN NOT NULL DEFAULT false,
-    "canceledAt" TIMESTAMP(3),
-    "trialStart" TIMESTAMP(3),
-    "trialEnd" TIMESTAMP(3),
-    "stripeId" TEXT,
-    "metadata" JSONB DEFAULT '{}',
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
-
-    CONSTRAINT "subscriptions_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
-CREATE TABLE "invoices" (
-    "id" TEXT NOT NULL,
-    "organizationId" TEXT NOT NULL,
-    "subscriptionId" TEXT,
-    "number" TEXT,
-    "amount" INTEGER NOT NULL,
-    "currency" TEXT NOT NULL DEFAULT 'USD',
-    "status" "InvoiceStatus" NOT NULL,
-    "dueDate" TIMESTAMP(3) NOT NULL,
-    "paidDate" TIMESTAMP(3),
-    "stripeId" TEXT,
-    "pdf" TEXT,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
-
-    CONSTRAINT "invoices_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
-CREATE TABLE "transactions" (
-    "id" TEXT NOT NULL,
-    "invoiceId" TEXT NOT NULL,
-    "amount" INTEGER NOT NULL,
-    "currency" TEXT NOT NULL DEFAULT 'USD',
-    "status" "TransactionStatus" NOT NULL,
-    "paymentMethod" TEXT,
-    "stripeId" TEXT,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
-
-    CONSTRAINT "transactions_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
-CREATE TABLE "events" (
-    "id" TEXT NOT NULL,
-    "userId" TEXT,
-    "organizationId" TEXT,
-    "eventType" TEXT NOT NULL,
-    "resourceType" TEXT NOT NULL,
-    "resourceId" TEXT NOT NULL,
-    "severity" TEXT NOT NULL DEFAULT 'INFO',
-    "metadata" JSONB DEFAULT '{}',
-    "timestamp" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    CONSTRAINT "events_pkey" PRIMARY KEY ("id")
-);
+            CONSTRAINT "events_pkey" PRIMARY KEY ("id")
+        );
+    END IF;
+END
+$$;
 
 -- CreateTable
 CREATE TABLE "notifications" (

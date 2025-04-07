@@ -10,7 +10,7 @@ import {
   CheckIcon,
   StarIcon
 } from '@heroicons/react/24/outline';
-import { PlanFeature } from '@/lib/types/pricing';
+import { PlanFeature, FeatureStatus } from '@/lib/types/pricing';
 
 export default function FeaturesPage() {
   const [features, setFeatures] = useState<PlanFeature[]>([]);
@@ -233,6 +233,12 @@ export default function FeaturesPage() {
                     </th>
                     <th
                       scope="col"
+                      className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900"
+                    >
+                      Status
+                    </th>
+                    <th
+                      scope="col"
                       className="relative py-3.5 pl-3 pr-4 sm:pr-6"
                     >
                       <span className="sr-only">Actions</span>
@@ -242,7 +248,7 @@ export default function FeaturesPage() {
                 <tbody className="divide-y divide-gray-200 bg-white">
                   {isLoading ? (
                     <tr>
-                      <td colSpan={5} className="py-10 text-center text-sm text-gray-500">
+                      <td colSpan={6} className="py-10 text-center text-sm text-gray-500">
                         <svg
                           className="mx-auto h-10 w-10 animate-spin text-gray-400"
                           xmlns="http://www.w3.org/2000/svg"
@@ -268,7 +274,7 @@ export default function FeaturesPage() {
                     </tr>
                   ) : features.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="py-10 text-center text-sm text-gray-500">
+                      <td colSpan={6} className="py-10 text-center text-sm text-gray-500">
                         No features found. Click "Add Feature" to create your first feature.
                       </td>
                     </tr>
@@ -290,6 +296,19 @@ export default function FeaturesPage() {
                           ) : (
                             '-'
                           )}
+                        </td>
+                        <td className="whitespace-nowrap px-3 py-4 text-sm">
+                          <span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${
+                            feature.status === FeatureStatus.BETA 
+                              ? 'bg-yellow-100 text-yellow-800'
+                              : feature.status === FeatureStatus.ACTIVE
+                              ? 'bg-green-100 text-green-800'
+                              : feature.status === FeatureStatus.DEPRECATED
+                              ? 'bg-red-100 text-red-800'
+                              : 'bg-blue-100 text-blue-800'
+                          }`}>
+                            {feature.status.charAt(0) + feature.status.slice(1).toLowerCase()}
+                          </span>
                         </td>
                         <td className="relative whitespace-nowrap py-4 pl-3 pr-4 text-right text-sm font-medium sm:pr-6">
                           <div className="flex justify-end space-x-4">
@@ -466,4 +485,4 @@ export default function FeaturesPage() {
       </Transition>
     </div>
   );
-} 
+}

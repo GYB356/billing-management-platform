@@ -4,6 +4,13 @@ export type CurrencyCode = 'USD' | 'EUR' | 'GBP' | 'CAD' | 'AUD' | 'JPY';
 export type FeatureAccessType = 'full' | 'limited' | 'none';
 export type PromotionType = 'percentage' | 'fixed_amount' | 'free_period';
 
+export enum FeatureStatus {
+  BETA = 'BETA',
+  ACTIVE = 'ACTIVE',
+  DEPRECATED = 'DEPRECATED',
+  COMING_SOON = 'COMING_SOON'
+}
+
 // Base pricing plan interface
 export interface PricingPlan {
   id: string;
@@ -40,6 +47,8 @@ export interface PlanFeature {
   description: string | null;
   unitName: string | null;
   isHighlighted: boolean;
+  status: FeatureStatus; // Add this
+  sortOrder: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -214,4 +223,4 @@ export interface SubscriptionUpgradeOptions {
   immediateChange?: boolean;
   prorationDate?: number;
   preserveTermEnd?: boolean;
-} 
+}

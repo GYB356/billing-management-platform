@@ -1,64 +1,40 @@
 import { prisma } from "@/lib/db";
+import { AuditAction } from "./audit-types";
 
-export type AuditAction =
-  | "user.login"
-  | "user.logout"
-  | "user.password_changed"
-  | "user.2fa_enabled"
-  | "user.2fa_disabled"
-  | "invoice.created"
-  | "invoice.updated"
-  | "invoice.deleted"
-  | "payment.processed"
-  | "payment.refunded"
-  | "subscription.created"
-  | "subscription.updated"
-  | "subscription.cancelled"
-  | "tax_rate.created"
-  | "tax_rate.updated"
-  | "tax_rate.deleted"
-  | "admin.settings_changed"
-  | "admin.user_role_changed"
-  | "webhook.created"
-  | "webhook.deleted"
-  | "api_key.created"
-  | "api_key.revoked";
-
-export interface AuditLogOptions {
+type AuditLogParams = {
   userId: string;
   action: AuditAction;
-  targetId?: string;
   description: string;
+  targetId?: string;
   metadata?: Record<string, any>;
   ipAddress?: string;
   userAgent?: string;
-}
+};
 
 export async function logAudit({
   userId,
   action,
-  targetId,
   description,
+  targetId,
   metadata = {},
   ipAddress,
   userAgent
-}: AuditLogOptions) {
+}: AuditLogParams) {
   try {
     await prisma.auditLog.create({
       data: {
         userId,
         action,
-        targetId,
         description,
+        targetId,
         metadata,
         ipAddress,
-        userAgent,
+        userAgent
       }
     });
   } catch (error) {
-    console.error('Failed to create audit log:', error);
-    // Optionally, you might want to throw the error or handle it differently
-    // depending on your application's needs
+    console.error("Failed to log audit:", error);
+    // Don't throw the error to prevent disrupting the main flow
   }
 }
 

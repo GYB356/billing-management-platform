@@ -24,6 +24,8 @@ model User {
   lastPasswordChange   DateTime?
   failedLoginAttempts  Int                  @default(0)
   lockedUntil          DateTime?
+  deletedAt            DateTime?
+  anonymized           Boolean              @default(false)
   createdAt            DateTime             @default(now())
   updatedAt            DateTime             @updatedAt
   communicationPrefsId String?

@@ -9,6 +9,7 @@ import {
   sendPaymentFailedEmail,
 } from '@/lib/email';
 import { stripe } from '@/lib/stripe';
+import { logAudit } from "@/lib/logging/audit";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: '2023-10-16',
@@ -71,6 +72,18 @@ export async function POST(request: NextRequest) {
             interval: subscription.items.data[0].price.recurring?.interval || 'month',
             startDate: new Date(subscription.current_period_start * 1000),
           });
+
+          // Log the subscription creation
+          await logAudit({
+            userId: customer.id,
+            action: "subscription.created",
+            description: `Subscription created with plan ${subscription.items.data[0]?.price.nickname || 'Unknown'}`,
+            metadata: {
+              subscriptionId: subscription.id,
+              planId: subscription.items.data[0]?.price.id,
+              status: subscription.status,
+            },
+          });
         }
         break;
       }
@@ -113,6 +126,18 @@ export async function POST(request: NextRequest) {
             interval: subscription.items.data[0].price.recurring?.interval || 'month',
             effectiveDate: new Date(subscription.current_period_start * 1000),
           });
+
+          // Log the subscription update
+          await logAudit({
+            userId: customer.id,
+            action: "subscription.updated",
+            description: `Subscription updated to status: ${subscription.status}`,
+            metadata: {
+              subscriptionId: subscription.id,
+              planId: subscription.items.data[0]?.price.id,
+              status: subscription.status,
+            },
+          });
         }
         break;
       }
@@ -136,6 +161,17 @@ export async function POST(request: NextRequest) {
           await sendSubscriptionCancellationEmail(customer.email, {
             planName: subscription.items.data[0].price.nickname || 'Premium Plan',
             endDate: new Date(subscription.current_period_end * 1000),
+          });
+
+          // Log the subscription cancellation
+          await logAudit({
+            userId: customer.id,
+            action: "subscription.cancelled",
+            description: `Subscription cancelled`,
+            metadata: {
+              subscriptionId: subscription.id,
+              planId: subscription.items.data[0]?.price.id,
+            },
           });
         }
         break;
@@ -260,6 +296,24 @@ export async function POST(request: NextRequest) {
 
         break;
       }
+
+      case 'payment_intent.succeeded': {
+        await handlePaymentIntentSucceeded(event.data.object as Stripe.PaymentIntent);
+        break;
+      }
+
+      case 'payment_intent.payment_failed': {
+        await handlePaymentIntentFailed(event.data.object as Stripe.PaymentIntent);
+        break;
+      }
+
+      case 'payment_method.attached': {
+        await handlePaymentMethodAttached(event.data.object as Stripe.PaymentMethod);
+        break;
+      }
+
+      default:
+        console.log(`Unhandled event type: ${event.type}`);
     }
 
     return new NextResponse('Webhook processed', { status: 200 });
@@ -267,4 +321,107 @@ export async function POST(request: NextRequest) {
     console.error('Error processing webhook:', error);
     return new NextResponse('Webhook error', { status: 400 });
   }
+}
+
+async function handlePaymentIntentSucceeded(paymentIntent: Stripe.PaymentIntent) {
+  const userId = paymentIntent.metadata.userId;
+  
+  if (!userId) {
+    console.error("Payment intent missing userId metadata");
+    return;
+  }
+
+  // Create a record of the payment
+  await prisma.payment.create({
+    data: {
+      userId,
+      amount: paymentIntent.amount,
+      currency: paymentIntent.currency,
+      status: "succeeded",
+      paymentIntentId: paymentIntent.id,
+      paymentMethodId: paymentIntent.payment_method as string,
+    },
+  });
+
+  // Log the successful payment
+  await logAudit({
+    userId,
+    action: "payment.succeeded",
+    description: `Payment of ${paymentIntent.amount / 100} ${paymentIntent.currency.toUpperCase()} succeeded`,
+    metadata: {
+      paymentIntentId: paymentIntent.id,
+      amount: paymentIntent.amount,
+      currency: paymentIntent.currency,
+    },
+  });
+}
+
+async function handlePaymentIntentFailed(paymentIntent: Stripe.PaymentIntent) {
+  const userId = paymentIntent.metadata.userId;
+  
+  if (!userId) {
+    console.error("Payment intent missing userId metadata");
+    return;
+  }
+
+  // Create a record of the failed payment
+  await prisma.payment.create({
+    data: {
+      userId,
+      amount: paymentIntent.amount,
+      currency: paymentIntent.currency,
+      status: "failed",
+      paymentIntentId: paymentIntent.id,
+      paymentMethodId: paymentIntent.payment_method as string,
+      failureReason: paymentIntent.last_payment_error?.message || "Unknown error",
+    },
+  });
+
+  // Log the failed payment
+  await logAudit({
+    userId,
+    action: "payment.failed",
+    description: `Payment of ${paymentIntent.amount / 100} ${paymentIntent.currency.toUpperCase()} failed`,
+    metadata: {
+      paymentIntentId: paymentIntent.id,
+      amount: paymentIntent.amount,
+      currency: paymentIntent.currency,
+      error: paymentIntent.last_payment_error?.message,
+    },
+  });
+}
+
+async function handlePaymentMethodAttached(paymentMethod: Stripe.PaymentMethod) {
+  const userId = paymentMethod.metadata.userId;
+  
+  if (!userId) {
+    console.error("Payment method missing userId metadata");
+    return;
+  }
+
+  // Store the payment method for future use
+  await prisma.paymentMethod.create({
+    data: {
+      userId,
+      stripePaymentMethodId: paymentMethod.id,
+      type: paymentMethod.type,
+      cardLast4: paymentMethod.card?.last4,
+      cardBrand: paymentMethod.card?.brand,
+      cardExpMonth: paymentMethod.card?.exp_month,
+      cardExpYear: paymentMethod.card?.exp_year,
+      isDefault: false,
+    },
+  });
+
+  // Log the payment method attachment
+  await logAudit({
+    userId,
+    action: "payment.method_added",
+    description: `Payment method ${paymentMethod.card?.brand} ending in ${paymentMethod.card?.last4} was added`,
+    metadata: {
+      paymentMethodId: paymentMethod.id,
+      cardBrand: paymentMethod.card?.brand,
+      cardLast4: paymentMethod.card?.last4,
+    },
+  });
 } 

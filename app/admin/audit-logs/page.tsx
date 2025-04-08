@@ -71,8 +71,8 @@ export default async function AuditLogsPage({
                 placeholder="Filter by user ID"
                 className="mt-1"
               />
-            </div>
-            <div>
+      </div>
+          <div>
               <label className="block text-sm font-medium text-gray-700">Action</label>
               <Input
                 type="text"
@@ -80,9 +80,9 @@ export default async function AuditLogsPage({
                 defaultValue={action}
                 placeholder="Filter by action"
                 className="mt-1"
-              />
-            </div>
-            <div>
+            />
+          </div>
+          <div>
               <label className="block text-sm font-medium text-gray-700">Date Range</label>
               <DateRangePicker
                 from={startDate}
@@ -90,24 +90,24 @@ export default async function AuditLogsPage({
                 onSelect={({ from, to }) => {
                   // Handle date selection
                 }}
-              />
-            </div>
+            />
+          </div>
           </div>
           <Button type="submit">Apply Filters</Button>
         </form>
       </div>
-
+      
       {/* Logs Table */}
       <div className="bg-white rounded-lg shadow overflow-hidden">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Timestamp
-              </th>
+                </th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                User
-              </th>
+                  User
+                </th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Action
               </th>
@@ -116,59 +116,59 @@ export default async function AuditLogsPage({
               </th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Target ID
-              </th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
+                </th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
             {logs.map((log) => (
               <tr key={log.id} className="hover:bg-gray-50">
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                   {format(new Date(log.createdAt), 'PPpp')}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
                   <div className="text-sm font-medium text-gray-900">
                     {log.user.name}
                   </div>
                   <div className="text-sm text-gray-500">
                     {log.user.email}
                   </div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                   {log.action}
                 </td>
                 <td className="px-6 py-4 text-sm text-gray-500">
                   {log.description}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                   {log.targetId}
-                </td>
-              </tr>
+                    </td>
+                  </tr>
             ))}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Pagination */}
+            </tbody>
+          </table>
+        </div>
+        
+        {/* Pagination */}
       <div className="mt-4 flex justify-between items-center">
         <div className="text-sm text-gray-700">
           Showing {(page - 1) * limit + 1} to {Math.min(page * limit, total)} of {total} results
         </div>
         <div className="space-x-2">
           <Button
-            disabled={page === 1}
+              disabled={page === 1}
             onClick={() => {
               // Handle previous page
             }}
-          >
-            Previous
+            >
+              Previous
           </Button>
           <Button
             disabled={!hasMore}
             onClick={() => {
               // Handle next page
             }}
-          >
-            Next
+            >
+              Next
           </Button>
         </div>
       </div>

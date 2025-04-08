@@ -16,8 +16,9 @@ model User {
   password             String?
   role                 UserRole             @default(USER)
   status               UserStatus           @default(ACTIVE)
-  twoFactorEnabled     Boolean              @default(false)
+  is2FAEnabled         Boolean              @default(false)
   twoFactorSecret      String?
+  last2FAVerified      DateTime?
   backupCodes          String[]             @default([])
   lastLoginAt          DateTime?
   lastPasswordChange   DateTime?
@@ -41,6 +42,8 @@ model User {
   subscriptions        Subscription[]
   userOrganizations    UserOrganization[]
   CommunicationPrefs   CommunicationPrefs?  @relation(fields: [communicationPrefsId], references: [id])
+  apiTokens            ApiToken[]
+  auditLogs            AuditLog[]
 
   @@index([email])
   @@map("users")
@@ -895,7 +898,6 @@ model accounts {
   access_token      String?
   expires_at        Int?
   token_type        String?
-  scope             String?
   id_token          String?
   session_state     String?
   users             User    @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -1273,6 +1275,77 @@ model BillingAttempt {
 
   @@index([subscriptionId])
   @@index([invoiceId])
+}
+
+model WebhookEvent {
+  id          String   @id @default(cuid())
+  type        String
+  payload     Json
+  source      String   // e.g. "stripe", "hubspot"
+  processed   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+}
+
+model WebhookSubscription {
+  id        String   @id @default(cuid())
+  url       String
+  event     String
+  headers   Json?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+model ApiToken {
+  id          String         @id @default(uuid())
+  token       String         @unique
+  userId      String
+  scopes      String[]
+  name        String
+  expiresAt   DateTime
+  lastUsedAt  DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  usageRecords ApiTokenUsage[]
+
+  @@index([userId])
+  @@index([token])
+}
+
+model ApiTokenUsage {
+  id          String    @id @default(cuid())
+  tokenId     String
+  endpoint    String
+  method      String
+  statusCode  Int
+  ipAddress   String?
+  userAgent   String?
+  timestamp   DateTime  @default(now())
+  responseTime Int?     // in milliseconds
+  token       ApiToken  @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+
+  @@index([tokenId])
+  @@index([timestamp])
+  @@index([endpoint])
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  userId      String
+  action      String
+  targetId    String?
+  description String
+  metadata    Json?    @default("{}")
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  user        User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
 }
 
 enum UserRole {

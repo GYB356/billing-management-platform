@@ -2,16 +2,35 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { pciComplianceMiddleware } from './middleware/pci-compliance';
 import { billingSecurity } from './middleware/billing-security';
+import { apiAuthMiddleware } from './middleware/apiAuth';
+import { createAuditLogMiddleware } from './lib/logging/audit';
+
+const auditLogMiddleware = createAuditLogMiddleware();
 
 export async function middleware(request: NextRequest) {
+  // Skip audit logging for non-API routes and static files
+  if (!request.nextUrl.pathname.startsWith('/api') || 
+      request.nextUrl.pathname.startsWith('/api/health') ||
+      request.nextUrl.pathname.includes('.')) {
+    return NextResponse.next();
+  }
+
+  // Apply API authentication middleware
+  const apiAuthResponse = await apiAuthMiddleware(request);
+  if (apiAuthResponse.status !== 200) {
+    return apiAuthResponse;
+  }
+
   // Apply PCI compliance checks first
   const pciResponse = await pciComplianceMiddleware(request);
   if (pciResponse.status !== 200) {
     return pciResponse;
   }
 
-  // Create the response
   const response = NextResponse.next();
+
+  // Add audit logging
+  await auditLogMiddleware(request, response, () => {});
 
   try {
     // Apply billing security middleware
@@ -29,15 +48,8 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // Add routes that need PCI compliance checking
-    '/api/payment-methods/:path*',
-    '/api/transactions/:path*',
-    '/api/checkout/:path*',
-    '/api/billing/:path*',
-    '/api/privacy/:path*',
-    '/api/subscriptions/:path*',
-    '/api/invoices/:path*',
-    '/api/payments/:path*',
-    '/api/admin/billing/:path*',
-  ]
+    // Match all API routes except health checks and static files
+    '/api/:path*',
+    '/((?!_next/static|favicon.ico|health).*)',
+  ],
 };

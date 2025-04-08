@@ -6,7 +6,7 @@ if (!process.env.STRIPE_SECRET_KEY) {
 
 // Initialize Stripe with your secret key
 export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: '2023-10-16', // Use the latest API version
+  apiVersion: '2023-08-16', // Use the consistent API version
 });
 
 // Helper function to format amount for display
@@ -35,7 +35,27 @@ export function getStripePriceId(planId: string): string {
   return priceMap[planId] || '';
 }
 
-// Helper function to create a customer in Stripe
+/**
+ * Get the display name of a plan
+ */
+export function getPlanDisplayName(planId: string): string {
+  const priceMap: Record<string, string> = {
+    'price_basic_monthly': 'Basic (Monthly)',
+    'price_basic_yearly': 'Basic (Yearly)',
+    'price_standard_monthly': 'Standard (Monthly)',
+    'price_standard_yearly': 'Standard (Yearly)',
+    'price_premium_monthly': 'Premium (Monthly)',
+    'price_premium_yearly': 'Premium (Yearly)',
+    'price_enterprise_monthly': 'Enterprise (Monthly)',
+    'price_enterprise_yearly': 'Enterprise (Yearly)',
+  };
+  
+  return priceMap[planId] || '';
+}
+
+/**
+ * Create a customer in Stripe
+ */
 export async function createStripeCustomer(userId: string, email: string, name?: string) {
   try {
     const customer = await stripe.customers.create({
@@ -53,7 +73,9 @@ export async function createStripeCustomer(userId: string, email: string, name?:
   }
 }
 
-// Helper function to get or create a customer in Stripe
+/**
+ * Get or create a customer in Stripe
+ */
 export async function getOrCreateStripeCustomer(userId: string, email: string, name?: string) {
   try {
     // First, try to find an existing customer
@@ -82,7 +104,9 @@ export async function getOrCreateStripeCustomer(userId: string, email: string, n
   }
 }
 
-// Helper function to create a subscription
+/**
+ * Create a subscription
+ */
 export async function createSubscription(
   customerId: string,
   priceId: string,
@@ -117,7 +141,9 @@ export async function createSubscription(
   }
 }
 
-// Helper function to cancel a subscription
+/**
+ * Cancel a subscription
+ */
 export async function cancelSubscription(subscriptionId: string, cancelAtPeriodEnd: boolean = true) {
   try {
     const subscription = await stripe.subscriptions.update(subscriptionId, {
@@ -131,11 +157,13 @@ export async function cancelSubscription(subscriptionId: string, cancelAtPeriodE
   }
 }
 
-// Helper function to update a subscription
+/**
+ * Update a subscription
+ */
 export async function updateSubscription(
   subscriptionId: string,
   priceId: string,
-  prorationBehavior: 'always_invoice' | 'create_prorations' | 'none' = 'create_prorations'
+  prorationBehavior: Stripe.SubscriptionUpdateParams.ProrationBehavior = 'create_prorations'
 ) {
   try {
     const subscription = await stripe.subscriptions.retrieve(subscriptionId);

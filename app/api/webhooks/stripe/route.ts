@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { headers } from 'next/headers';
-import Stripe from 'stripe';
-import { prisma } from '@/lib/prisma';
+import { prisma } from '@/lib/db';
 import {
   sendSubscriptionConfirmationEmail,
   sendSubscriptionUpdateEmail,
@@ -10,28 +9,37 @@ import {
 } from '@/lib/email';
 import { stripe } from '@/lib/stripe';
 import { logAudit } from "@/lib/logging/audit";
+import type Stripe from 'stripe';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: '2023-10-16',
-});
-
-const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;
+// Get webhook secret from environment variables
+const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
 export async function POST(request: NextRequest) {
   const body = await request.text();
   const signature = headers().get('stripe-signature');
 
-  if (!signature) {
-    return new NextResponse('No signature', { status: 400 });
+  if (!signature || !webhookSecret) {
+    return new NextResponse(
+      JSON.stringify({ error: 'Missing stripe signature or webhook secret' }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } }
+    );
   }
 
-  try {
-    const event = stripe.webhooks.constructEvent(
-      body,
-      signature,
-      process.env.STRIPE_WEBHOOK_SECRET!
-    );
+  let event: Stripe.Event;
 
+  try {
+    // Verify the event came from Stripe
+    event = stripe.webhooks.constructEvent(body, signature, webhookSecret);
+  } catch (err) {
+    console.error(`Webhook signature verification failed:`, err);
+    return new NextResponse(
+      JSON.stringify({ error: 'Webhook signature verification failed' }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
+  // Handle the event
+  try {
     switch (event.type) {
       case 'customer.subscription.created': {
         const subscription = event.data.object as Stripe.Subscription;
@@ -66,12 +74,14 @@ export async function POST(request: NextRequest) {
           });
 
           // Send confirmation email
-          await sendSubscriptionConfirmationEmail(customer.email, {
-            planName: subscription.items.data[0].price.nickname || 'Premium Plan',
-            amount: subscription.items.data[0].price.unit_amount! / 100,
-            interval: subscription.items.data[0].price.recurring?.interval || 'month',
-            startDate: new Date(subscription.current_period_start * 1000),
-          });
+          await sendSubscriptionConfirmationEmail(
+            customer.email,
+            subscription.items.data[0].price.nickname || 'Premium Plan',
+            subscription.items.data[0].price.unit_amount!,
+            subscription.items.data[0].price.currency,
+            subscription.items.data[0].price.recurring?.interval || 'month',
+            new Date(subscription.current_period_start * 1000)
+          );
 
           // Log the subscription creation
           await logAudit({
@@ -119,13 +129,19 @@ export async function POST(request: NextRequest) {
             },
           });
 
-          // Send update email
-          await sendSubscriptionUpdateEmail(customer.email, {
-            planName: subscription.items.data[0].price.nickname || 'Premium Plan',
-            amount: subscription.items.data[0].price.unit_amount! / 100,
-            interval: subscription.items.data[0].price.recurring?.interval || 'month',
-            effectiveDate: new Date(subscription.current_period_start * 1000),
+          // Get old plan details from database
+          const oldSubscription = await prisma.subscription.findUnique({
+            where: { stripeSubscriptionId: subscription.id },
+            select: { planId: true },
           });
+
+          // Send update email
+          await sendSubscriptionUpdateEmail(
+            customer.email,
+            oldSubscription?.planId || 'Previous Plan',
+            subscription.items.data[0].price.nickname || 'New Plan',
+            new Date(subscription.current_period_start * 1000)
+          );
 
           // Log the subscription update
           await logAudit({
@@ -158,10 +174,11 @@ export async function POST(request: NextRequest) {
           });
 
           // Send cancellation email
-          await sendSubscriptionCancellationEmail(customer.email, {
-            planName: subscription.items.data[0].price.nickname || 'Premium Plan',
-            endDate: new Date(subscription.current_period_end * 1000),
-          });
+          await sendSubscriptionCancellationEmail(
+            customer.email,
+            subscription.items.data[0].price.nickname || 'Premium Plan',
+            new Date(subscription.current_period_end * 1000)
+          );
 
           // Log the subscription cancellation
           await logAudit({
@@ -174,126 +191,6 @@ export async function POST(request: NextRequest) {
             },
           });
         }
-        break;
-      }
-
-      case 'checkout.session.completed': {
-        const session = event.data.object as Stripe.Checkout.Session;
-        const { invoiceId, subscriptionId, organizationId } = session.metadata as {
-          invoiceId: string;
-          subscriptionId: string;
-          organizationId: string;
-        };
-
-        // Update invoice status
-        await prisma.invoice.update({
-          where: { id: invoiceId },
-          data: {
-            status: 'PAID',
-            paidAt: new Date(),
-            payment: {
-              create: {
-                amount: session.amount_total || 0,
-                currency: session.currency,
-                status: 'SUCCEEDED',
-                method: 'CREDIT_CARD',
-                stripeId: session.payment_intent as string,
-              },
-            },
-          },
-        });
-
-        // Update subscription status if needed
-        if (subscriptionId) {
-          await prisma.subscription.update({
-            where: { id: subscriptionId },
-            data: {
-              status: 'active',
-              currentPeriodStart: new Date(),
-              currentPeriodEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days from now
-            },
-          });
-        }
-
-        break;
-      }
-
-      case 'invoice.payment_succeeded': {
-        const invoice = event.data.object as Stripe.Invoice;
-        
-        // Update invoice status
-        await prisma.invoice.update({
-          where: { stripeInvoiceId: invoice.id },
-          data: {
-            status: 'PAID',
-            paidAt: new Date(),
-            payment: {
-              create: {
-                amount: invoice.amount_paid || 0,
-                currency: invoice.currency,
-                status: 'SUCCEEDED',
-                method: 'CREDIT_CARD',
-                stripeId: invoice.payment_intent as string,
-              },
-            },
-          },
-        });
-
-        break;
-      }
-
-      case 'invoice.payment_failed': {
-        const invoice = event.data.object as Stripe.Invoice;
-        
-        // Update invoice status
-        await prisma.invoice.update({
-          where: { stripeInvoiceId: invoice.id },
-          data: {
-            status: 'OVERDUE',
-          },
-        });
-
-        // Get customer email
-        const customer = await prisma.organization.findFirst({
-          where: { stripeCustomerId: invoice.customer as string },
-          select: { email: true },
-        });
-
-        if (customer?.email) {
-          // Send payment failed email
-          await sendPaymentFailedEmail(customer.email, {
-            amount: (invoice.amount_due || 0) / 100,
-            dueDate: new Date((invoice.due_date || 0) * 1000),
-            retryDate: new Date(((invoice.next_payment_attempt || invoice.due_date) || 0) * 1000),
-          });
-        }
-
-        break;
-      }
-
-      case 'charge.refunded': {
-        const charge = event.data.object as Stripe.Charge;
-        
-        // Find and update payment status
-        await prisma.payment.update({
-          where: { stripeId: charge.payment_intent as string },
-          data: {
-            status: 'REFUNDED',
-          },
-        });
-
-        // Update invoice status
-        await prisma.invoice.update({
-          where: {
-            payment: {
-              stripeId: charge.payment_intent as string,
-            },
-          },
-          data: {
-            status: 'REFUNDED',
-          },
-        });
-
         break;
       }
 
@@ -316,15 +213,21 @@ export async function POST(request: NextRequest) {
         console.log(`Unhandled event type: ${event.type}`);
     }
 
-    return new NextResponse('Webhook processed', { status: 200 });
+    return new NextResponse(JSON.stringify({ received: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    });
   } catch (error) {
-    console.error('Error processing webhook:', error);
-    return new NextResponse('Webhook error', { status: 400 });
+    console.error(`Error processing webhook:`, error);
+    return new NextResponse(
+      JSON.stringify({ error: 'Error processing webhook' }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    );
   }
 }
 
 async function handlePaymentIntentSucceeded(paymentIntent: Stripe.PaymentIntent) {
-  const userId = paymentIntent.metadata.userId;
+  const userId = paymentIntent.metadata?.userId;
   
   if (!userId) {
     console.error("Payment intent missing userId metadata");
@@ -357,7 +260,7 @@ async function handlePaymentIntentSucceeded(paymentIntent: Stripe.PaymentIntent)
 }
 
 async function handlePaymentIntentFailed(paymentIntent: Stripe.PaymentIntent) {
-  const userId = paymentIntent.metadata.userId;
+  const userId = paymentIntent.metadata?.userId;
   
   if (!userId) {
     console.error("Payment intent missing userId metadata");
@@ -377,6 +280,20 @@ async function handlePaymentIntentFailed(paymentIntent: Stripe.PaymentIntent) {
     },
   });
 
+  // Send payment failed email if we have user information
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { email: true },
+  });
+
+  if (user?.email) {
+    await sendPaymentFailedEmail(user.email, {
+      amount: paymentIntent.amount,
+      currency: paymentIntent.currency,
+      dueDate: new Date(),
+    });
+  }
+
   // Log the failed payment
   await logAudit({
     userId,
@@ -392,7 +309,7 @@ async function handlePaymentIntentFailed(paymentIntent: Stripe.PaymentIntent) {
 }
 
 async function handlePaymentMethodAttached(paymentMethod: Stripe.PaymentMethod) {
-  const userId = paymentMethod.metadata.userId;
+  const userId = paymentMethod.metadata?.userId;
   
   if (!userId) {
     console.error("Payment method missing userId metadata");
@@ -400,7 +317,7 @@ async function handlePaymentMethodAttached(paymentMethod: Stripe.PaymentMethod) 
   }
 
   // Store the payment method for future use
-  await prisma.paymentMethod.create({
+  await prisma.userPaymentMethod.create({
     data: {
       userId,
       stripePaymentMethodId: paymentMethod.id,

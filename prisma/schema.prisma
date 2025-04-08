@@ -43,9 +43,11 @@ model User {
   sessions             sessions[]
   subscriptions        Subscription[]
   userOrganizations    UserOrganization[]
-  CommunicationPrefs   CommunicationPrefs?  @relation(fields: [communicationPrefsId], references: [id])
   apiTokens            ApiToken[]
+  CommunicationPrefs   CommunicationPrefs?  @relation(fields: [communicationPrefsId], references: [id])
   auditLogs            AuditLog[]
+  payments             Payment[]
+  paymentMethods       UserPaymentMethod[]
 
   @@index([email])
   @@map("users")
@@ -439,7 +441,7 @@ model InvoiceTaxRate {
   taxRateId String
   amount    Float
   invoices  Invoice @relation(fields: [invoiceId], references: [id])
-  TaxRate   TaxRate @relation(fields: [taxRateId], references: [id])
+  TaxRate   TaxRate @relation(fields: [taxRateId], references: [id], onDelete: Cascade)
 
   @@index([invoiceId])
   @@index([taxRateId])
@@ -1215,139 +1217,79 @@ model win_back_campaigns {
   @@index([subscriptionId])
 }
 
-model PaymentMethod {
-  id              String        @id @default(cuid())
-  organizationId  String
-  customerId      String
-  type            String        // e.g., 'card', 'bank_account'
-  provider        String        // e.g., 'stripe'
-  providerMethodId String       // ID from the payment provider
-  last4           String?       // Last 4 digits of card/account
-  expiryMonth     Int?         // For cards
-  expiryYear      Int?         // For cards
-  brand           String?       // For cards (visa, mastercard, etc.)
-  isDefault       Boolean       @default(false)
-  status          String        @default("active") // active, expired, canceled
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
-  customer        Customer      @relation(fields: [customerId], references: [id])
-  organization    Organization  @relation(fields: [organizationId], references: [id])
-  invoices        Invoice[]
-  transactions    Transaction[]
-
-  @@index([organizationId])
-  @@index([customerId])
+model Payment {
+  id                String   @id @default(cuid())
+  userId            String
+  amount            Int
+  currency          String   @default("usd")
+  status            PaymentStatus
+  paymentIntentId   String?  @unique
+  paymentMethodId   String?
+  failureReason     String?
+  stripeCustomerId  String?
+  metadata          Json?    @default("{}")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  user              User     @relation(fields: [userId], references: [id])
+  
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("payments")
 }
 
-model Transaction {
-  id              String           @id @default(cuid())
-  customerId      String
-  invoiceId       String?
-  subscriptionId  String?
-  amount          Float
-  currency        String           @default("USD")
-  type            TransactionType
-  status          TransactionStatus @default(PENDING)
-  paymentMethodId String?
-  paymentIntentId String?
-  description     String?
-  metadata        Json?
-  createdAt       DateTime         @default(now())
-  customer        Customer         @relation(fields: [customerId], references: [id])
-  invoice         Invoice?         @relation(fields: [invoiceId], references: [id])
-  subscription    Subscription?    @relation(fields: [subscriptionId], references: [id])
-  paymentMethod   PaymentMethod?   @relation(fields: [paymentMethodId], references: [id])
-
-  @@index([customerId])
-  @@index([invoiceId])
-  @@index([subscriptionId])
-  @@index([paymentMethodId])
-}
-
-model BillingAttempt {
-  id             String    @id @default(cuid())
-  subscriptionId String
-  invoiceId      String?
-  status         BillingAttemptStatus
-  errorMessage   String?
-  attemptedAt    DateTime
-  createdAt      DateTime  @default(now())
-  subscription   Subscription @relation(fields: [subscriptionId], references: [id])
-  invoice        Invoice?    @relation(fields: [invoiceId], references: [id])
-
-  @@index([subscriptionId])
-  @@index([invoiceId])
-}
-
-model WebhookEvent {
-  id          String   @id @default(cuid())
-  type        String
-  payload     Json
-  source      String   // e.g. "stripe", "hubspot"
-  processed   Boolean  @default(false)
-  createdAt   DateTime @default(now())
-}
-
-model WebhookSubscription {
-  id        String   @id @default(cuid())
-  url       String
-  event     String
-  headers   Json?
-  active    Boolean  @default(true)
-  createdAt DateTime @default(now())
+model UserPaymentMethod {
+  id                    String   @id @default(cuid())
+  userId                String
+  stripePaymentMethodId String   @unique
+  type                  String
+  cardLast4             String?
+  cardBrand             String?
+  cardExpMonth          Int?
+  cardExpYear           Int?
+  isDefault             Boolean  @default(false)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  
+  user                  User     @relation(fields: [userId], references: [id])
+  
+  @@index([userId])
+  @@map("user_payment_methods")
 }
 
 model ApiToken {
-  id          String         @id @default(uuid())
-  token       String         @unique
-  userId      String
-  scopes      String[]
-  name        String
-  expiresAt   DateTime
-  lastUsedAt  DateTime?
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
-  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  usageRecords ApiTokenUsage[]
+  id         String    @id @default(cuid())
+  token      String    @unique
+  userId     String
+  scopes     String[]
+  name       String
+  expiresAt  DateTime?
+  lastUsedAt DateTime?
+  usageCount Int       @default(0)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  usages     ApiTokenUsage[]
 
-  @@index([userId])
   @@index([token])
+  @@index([userId])
 }
 
 model ApiTokenUsage {
-  id          String    @id @default(cuid())
-  tokenId     String
-  endpoint    String
-  method      String
-  statusCode  Int
-  ipAddress   String?
-  userAgent   String?
-  timestamp   DateTime  @default(now())
-  responseTime Int?     // in milliseconds
-  token       ApiToken  @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+  id           String   @id @default(cuid())
+  tokenId      String
+  endpoint     String
+  method       String
+  statusCode   Int
+  ipAddress    String?
+  userAgent    String?
+  responseTime Int?
+  timestamp    DateTime @default(now())
+  token        ApiToken @relation(fields: [tokenId], references: [id], onDelete: Cascade)
 
   @@index([tokenId])
   @@index([timestamp])
-  @@index([endpoint])
-}
-
-model AuditLog {
-  id          String   @id @default(cuid())
-  userId      String
-  action      String
-  targetId    String?
-  description String
-  metadata    Json?    @default("{}")
-  ipAddress   String?
-  userAgent   String?
-  createdAt   DateTime @default(now())
-
-  user        User     @relation(fields: [userId], references: [id])
-
-  @@index([userId])
-  @@index([action])
-  @@index([createdAt])
-  @@map("audit_logs")
 }
 
 enum UserRole {

@@ -1,0 +1,601 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// User model
+model User {
+  id                String             @id @default(cuid())
+  name              String?
+  email             String             @unique
+  password          String?
+  role              UserRole           @default(USER)
+  status            UserStatus         @default(ACTIVE)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  userOrganizations UserOrganization[]
+
+  @@index([email])
+  @@map("users")
+}
+
+enum UserRole {
+  ADMIN
+  USER
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+// NextAuth required models
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Session {
+  id                String   @id @default(cuid())
+  sessionToken      String   @unique
+  userId            String
+  expires           DateTime
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  twoFactorVerified Boolean  @default(false)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// Organization model
+model Organization {
+  id                String             @id @default(cuid())
+  name              String
+  email             String?            @unique
+  phone             String?
+  address           String?
+  city              String?
+  state             String?
+  country           String?
+  postalCode        String?
+  taxId             String?
+  settings          Json?              @default("{}")
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  stripeCustomerId  String?            @unique
+  userOrganizations UserOrganization[]
+  subscriptions     Subscription[]
+  invoices          Invoice[]
+  taxRates          TaxRate[]
+  taxExemptions     TaxExemption[]
+  customers         Customer[]
+
+  @@map("organizations")
+}
+
+model UserOrganization {
+  id             String       @id @default(cuid())
+  userId         String
+  organizationId String
+  role           String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([userId, organizationId])
+  @@map("user_organizations")
+}
+
+enum OrganizationRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+// Products and pricing
+model Product {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  metadata    Json?    @default("{}")
+  stripeId    String?  @unique
+
+  @@map("products")
+}
+
+// Pricing models
+model PricingPlan {
+  id              String   @id @default(cuid())
+  name            String
+  description     String?
+  pricingType     String   @default("flat") // flat, per_user, tiered, usage_based
+  basePrice       Int      @default(0) // Price in cents
+  currency        String   @default("USD")
+  billingInterval String   @default("monthly") // monthly, quarterly, annual, custom
+  trialDays       Int      @default(0)
+  sortOrder       Int      @default(0)
+  isActive        Boolean  @default(true)
+  isPublic        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  tiers          PricingTier[]
+  planFeatures   PlanFeatureAssociation[]
+  subscriptions  Subscription[]
+  promotionPlans PromotionPlan[]
+}
+
+model PricingTier {
+  id         String  @id @default(cuid())
+  planId     String
+  upTo       Int? // null means unlimited
+  price      Int? // Price in cents
+  flatFee    Int? // Flat fee in cents
+  perUnitFee Int? // Per unit fee in cents
+  infinite   Boolean @default(false) // Whether this tier has no upper limit
+
+  // Relations
+  plan PricingPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+}
+
+model PlanFeature {
+  id            String   @id @default(cuid())
+  name          String
+  description   String?
+  unitName      String? // For metered features (e.g., "users", "API calls")
+  isHighlighted Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  planFeatures      PlanFeatureAssociation[]
+  promotionFeatures PromotionFeature[]
+  usageRecords      UsageRecord[]
+  usageTiers        UsageTier[]
+}
+
+model PlanFeatureAssociation {
+  id        String @id @default(cuid())
+  planId    String
+  featureId String
+
+  // Relations
+  plan    PricingPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  feature PlanFeature @relation(fields: [featureId], references: [id], onDelete: Cascade)
+
+  // Indexes
+  @@unique([planId, featureId])
+}
+
+model PricingPromotion {
+  id             String    @id @default(cuid())
+  code           String    @unique
+  name           String
+  description    String?
+  discountType   String    @default("percentage") // percentage, fixed, free_trial
+  discountValue  Int // Percentage or amount in cents
+  maxRedemptions Int? // null for unlimited
+  timesRedeemed  Int       @default(0)
+  startDate      DateTime?
+  endDate        DateTime?
+  isActive       Boolean   @default(true)
+  isStackable    Boolean   @default(false) // Whether can be combined with other promotions
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  // Relations
+  promotionPlans    PromotionPlan[]
+  promotionFeatures PromotionFeature[]
+  redemptions       PromotionRedemption[]
+}
+
+model PromotionPlan {
+  id          String @id @default(cuid())
+  promotionId String
+  planId      String
+
+  // Relations
+  promotion PricingPromotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+  plan      PricingPlan      @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  // Indexes
+  @@unique([promotionId, planId])
+}
+
+model PromotionFeature {
+  id          String @id @default(cuid())
+  promotionId String
+  featureId   String
+
+  // Relations
+  promotion PricingPromotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+  feature   PlanFeature      @relation(fields: [featureId], references: [id], onDelete: Cascade)
+
+  // Indexes
+  @@unique([promotionId, featureId])
+}
+
+model PromotionRedemption {
+  id             String          @id @default(cuid())
+  promotionId    String
+  subscriptionId String
+  redeemedAt     DateTime        @default(now())
+  metadata       Json?           @default("{}")
+
+  // Relations
+  promotion      PricingPromotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+  subscription   Subscription     @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@unique([promotionId, subscriptionId])
+  @@index([promotionId])
+  @@index([subscriptionId])
+  @@map("promotion_redemptions")
+}
+
+model Customer {
+  id             String         @id @default(cuid())
+  organizationId String
+  name           String
+  email          String?
+  phone          String?
+  address        String?
+  city           String?
+  state          String?
+  country        String?
+  postalCode     String?
+  taxId          String?
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invoices       Invoice[]
+  taxExemptions  TaxExemption[]
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@unique([organizationId, email])
+  @@map("customers")
+}
+
+model Subscription {
+  id             String       @id @default(cuid())
+  organizationId String
+  name           String
+  description    String?
+  price          Float
+  billingPeriod  String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@map("subscriptions")
+}
+
+model Invoice {
+  id             String       @id @default(cuid())
+  organizationId String
+  customerId     String
+  number         String
+  status         String
+  dueDate        DateTime
+  subtotal       Float
+  total          Float
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer       Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  taxes          InvoiceTax[]
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([organizationId, number])
+  @@map("invoices")
+}
+
+model TaxRate {
+  id             String         @id @default(cuid())
+  organizationId String
+  name           String
+  rate           Float
+  country        String
+  state          String?
+  city           String?
+  description    String?
+  isActive       Boolean        @default(true)
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invoiceTaxes   InvoiceTax[]
+  taxExemptions  TaxExemption[]
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@unique([organizationId, country, state, city])
+  @@map("tax_rates")
+}
+
+model TaxExemption {
+  id             String       @id @default(cuid())
+  organizationId String
+  customerId     String
+  taxRateId      String
+  startDate      DateTime
+  endDate        DateTime?
+  reason         String?
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer       Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  taxRate        TaxRate     @relation(fields: [taxRateId], references: [id], onDelete: Cascade)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  @@unique([customerId, taxRateId])
+  @@map("tax_exemptions")
+}
+
+model InvoiceTax {
+  id         String   @id @default(cuid())
+  invoiceId  String
+  taxRateId  String
+  amount     Float
+  isExempt   Boolean  @default(false)
+  invoice    Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  taxRate    TaxRate  @relation(fields: [taxRateId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([invoiceId, taxRateId])
+  @@map("invoice_taxes")
+}
+
+model SubscriptionPlan {
+  id          String   @id @default(cuid())
+  name        String
+  description String
+  price       Float
+  interval    String   // 'month' or 'year'
+  features    String[]
+  stripePriceId String @unique
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// Notifications
+model Notification {
+  id             String           @id @default(cuid())
+  userId         String?
+  organizationId String?
+  title          String
+  message        String
+  type           NotificationType
+  read           Boolean          @default(false)
+  data           Json?            @default("{}")
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  user           User?            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization?    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([organizationId])
+  @@index([read])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+enum NotificationType {
+  INFO
+  SUCCESS
+  WARNING
+  ERROR
+}
+
+// Webhook processing
+model ProcessedWebhookEvent {
+  eventId     String   @id
+  eventType   String
+  processedAt DateTime @default(now())
+
+  @@index([eventType])
+  @@index([processedAt])
+  @@map("processed_webhook_events")
+}
+
+// Promotional pricing and discount management
+model Promotion {
+  id              String       @id @default(cuid())
+  name            String
+  description     String?
+  discountType    DiscountType
+  discountAmount  Int // Percentage or fixed amount in cents
+  currency        String       @default("USD")
+  active          Boolean      @default(true)
+  startDate       DateTime     @default(now())
+  endDate         DateTime?
+  maxRedemptions  Int?
+  redemptionCount Int          @default(0)
+  applicablePlans String[] // Array of plan IDs this promotion applies to
+  stripeId        String?      @unique
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  metadata        Json?        @default("{}")
+  coupons         Coupon[]
+
+  @@index([active])
+  @@index([startDate, endDate])
+  @@map("promotions")
+}
+
+enum DiscountType {
+  PERCENTAGE
+  FIXED_AMOUNT
+}
+
+model Coupon {
+  id              String    @id @default(cuid())
+  promotionId     String
+  code            String    @unique
+  active          Boolean   @default(true)
+  redemptionCount Int       @default(0)
+  maxRedemptions  Int?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  promotion       Promotion @relation(fields: [promotionId], references: [id])
+
+  @@index([code])
+  @@index([promotionId])
+  @@map("coupons")
+}
+
+// One-time payments
+model OneTimePayment {
+  id             String        @id @default(cuid())
+  organizationId String
+  amount         Int // In cents
+  currency       String        @default("USD")
+  description    String
+  status         PaymentStatus
+  paymentMethod  String?
+  stripeId       String?       @unique
+  invoiceId      String?
+  metadata       Json?         @default("{}")
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  organization   Organization  @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("one_time_payments")
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+}
+
+// Translation model for storing internationalization content
+model Translation {
+  id        String   @id @default(cuid())
+  key       String   
+  locale    String
+  value     String   @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([key, locale])
+  @@index([locale])
+  @@index([key])
+}
+
+// User preferences model for storing user-specific settings
+model UserPreference {
+  id             String   @id @default(cuid())
+  userId         String   @unique
+  language       String?  // Preferred language/locale
+  dateFormat     String?  // Preferred date format
+  timeFormat     String?  // Preferred time format
+  numberFormat   String?  // Preferred number format
+  timezone       String?  // Preferred timezone
+  currencyCode   String?  // Preferred currency
+  theme          String?  // UI theme preference
+  notifyEmail    Boolean  @default(true) // Email notification preference
+  notifyInApp    Boolean  @default(true) // In-app notification preference
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Relations
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model UserPreferences {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id])
+  language        String   @default("en")
+  dateFormat      String   @default("long")
+  numberFormat    String   @default("standard")
+  currencyFormat  String   @default("symbol")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+// System metrics model
+model SystemMetrics {
+  id        String   @id @default(cuid())
+  timestamp DateTime @default(now())
+  cpu       Json     // Stores CPU metrics
+  memory    Json     // Stores memory metrics
+  disk      Json     // Stores disk metrics
+  network   Json     // Stores network metrics
+
+  @@index([timestamp])
+}
+
+// Performance metrics model
+model PerformanceMetrics {
+  id        String   @id @default(cuid())
+  timestamp DateTime @default(now())
+  requests  Json     // Stores request metrics
+  database  Json     // Stores database metrics
+  cache     Json     // Stores cache metrics
+  external  Json     // Stores external service metrics
+
+  @@index([timestamp])
+}
+
+// Health check model
+model HealthCheck {
+  id        String   @id @default(cuid())
+  timestamp DateTime @default(now())
+  name      String   // Name of the health check
+  status    String   // healthy, degraded, or unhealthy
+  message   String?  // Optional message about the check
+  metadata  Json?    // Additional metadata about the check
+
+  @@index([timestamp])
+  @@index([status])
+}
+
+// Alert model
+model Alert {
+  id        String   @id @default(cuid())
+  timestamp DateTime @default(now())
+  type      String   // Type of alert
+  severity  String   // INFO, WARNING, ERROR
+  message   String   // Alert message
+  metadata  Json?    // Additional metadata about the alert
+  resolved  Boolean  @default(false)
+  resolvedAt DateTime?
+
+  @@index([timestamp])
+  @@index([severity])
+  @@index([resolved])
+}

@@ -1,0 +1,25 @@
+name: billing-platform-production
+services:
+  web:
+    image: billing-platform:latest
+    env_file: .env.production
+    ports:
+      - "3000:3000"
+    depends_on:
+      - db
+      - redis
+    
+  db:
+    image: postgres:14
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    env_file: .env.production
+    
+  redis:
+    image: redis:alpine
+    volumes:
+      - redis_data:/data
+
+volumes:
+  postgres_data:
+  redis_data:

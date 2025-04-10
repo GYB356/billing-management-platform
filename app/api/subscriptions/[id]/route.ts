@@ -5,8 +5,8 @@ import { prisma } from '@/lib/prisma';
 import { calculateUsageCharges } from '@/lib/usage';
 
 export async function GET(
-  request: NextRequest,
-  { params }: { params: { id: string } }
+  req: NextRequest,
+  { params }: { params: { id: string } } // Using 'id' consistently
 ) {
   try {
     const session = await getServerSession(authOptions);
@@ -99,4 +99,4 @@ export async function GET(
     console.error('Error fetching subscription data:', error);
     return new NextResponse('Internal Server Error', { status: 500 });
   }
-} 
+}

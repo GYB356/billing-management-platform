@@ -6,7 +6,7 @@ import { InvoiceGenerator } from '@/lib/invoice-generator';
 import { createEvent } from '@/lib/events';
 
 export async function GET(
-  request: NextRequest,
+  req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
@@ -46,10 +46,10 @@ export async function GET(
     }
 
     // Get template options from query params
-    const theme = request.nextUrl.searchParams.get('theme') || 'light';
-    const showTaxDetails = request.nextUrl.searchParams.get('showTaxDetails') !== 'false';
-    const showExchangeRate = request.nextUrl.searchParams.get('showExchangeRate') !== 'false';
-    const currency = request.nextUrl.searchParams.get('currency') || invoice.currency;
+    const theme = req.nextUrl.searchParams.get('theme') || 'light';
+    const showTaxDetails = req.nextUrl.searchParams.get('showTaxDetails') !== 'false';
+    const showExchangeRate = req.nextUrl.searchParams.get('showExchangeRate') !== 'false';
+    const currency = req.nextUrl.searchParams.get('currency') || invoice.currency;
     
     // Generate the PDF
     const pdfBuffer = await InvoiceGenerator.generateInvoicePDF(invoice.id, {
@@ -95,7 +95,7 @@ export async function GET(
 }
 
 export async function POST(
-  request: NextRequest,
+  req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
@@ -130,7 +130,7 @@ export async function POST(
     }
 
     // Get template options from request body
-    const options = await request.json();
+    const options = await req.json();
 
     // Generate the PDF with custom options
     const pdfBuffer = await InvoiceGenerator.generateInvoicePDF(invoice.id, options);
@@ -161,4 +161,4 @@ export async function POST(
     console.error('Error generating custom invoice PDF:', error);
     return new NextResponse('Internal Server Error', { status: 500 });
   }
-} 
+}

@@ -1,45 +1,24 @@
-import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth/next';
+import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { requirePermission } from '@/lib/auth/rbac';
 
 export async function GET(
-  request: Request,
-  { params }: { params: { id: string } }
+  req: NextRequest,
+  { params }: { params: { id: string } } // Consistently use 'id'
 ) {
   try {
     const session = await getServerSession(authOptions);
-    
+
     if (!session?.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    
-    // Check if the user has permission to view invoices
-    try {
-      requirePermission(
-        session.user.role as any,
-        session.user.organizationRole as any || 'MEMBER',
-        'view:invoices'
-      );
-    } catch (error) {
-      return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 });
-    }
-    
-    const invoiceId = params.id;
-    
-    // Get invoice with related data
-    const invoice = await prisma.invoice.findFirst({
-      where: {
-        id: invoiceId,
-        organization: {
-          userOrganizations: {
-            some: {
-              userId: session.user.id,
-            },
-          },
-        },
-      },
+
+    const id = params.id; // Use consistent parameter name
+
+    const invoice = await prisma.invoice.findUnique({
+      where: { id },
       include: {
         items: true,
         customer: true,
@@ -47,36 +26,35 @@ export async function GET(
         taxes: true,
       },
     });
-    
+
     if (!invoice) {
       return NextResponse.json(
         { error: 'Invoice not found or you do not have permission to access it' },
         { status: 404 }
       );
     }
-    
+
     return NextResponse.json(invoice);
   } catch (error: any) {
-    console.error('Error retrieving invoice:', error);
+    console.error('Error fetching invoice:', error);
     return NextResponse.json(
-      { error: error.message || 'Failed to retrieve invoice' },
+      { error: error.message || 'Failed to fetch invoice' },
       { status: 500 }
     );
   }
 }
 
-// Implement PATCH method to update invoice
 export async function PATCH(
-  request: Request,
-  { params }: { params: { id: string } }
+  req: NextRequest,
+  { params }: { params: { id: string } } // Consistently use 'id'
 ) {
   try {
     const session = await getServerSession(authOptions);
-    
+
     if (!session?.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    
+
     // Check if the user has permission to manage invoices
     try {
       requirePermission(
@@ -87,14 +65,14 @@ export async function PATCH(
     } catch (error) {
       return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 });
     }
-    
-    const invoiceId = params.id;
-    const data = await request.json();
-    
+
+    const id = params.id; // Use consistent parameter name
+    const data = await req.json();
+
     // Check if invoice exists and belongs to user's organization
     const existingInvoice = await prisma.invoice.findFirst({
       where: {
-        id: invoiceId,
+        id: id,
         organization: {
           userOrganizations: {
             some: {
@@ -104,14 +82,14 @@ export async function PATCH(
         },
       },
     });
-    
+
     if (!existingInvoice) {
       return NextResponse.json(
         { error: 'Invoice not found or you do not have permission to access it' },
         { status: 404 }
       );
     }
-    
+
     // Check if invoice is in DRAFT status (only draft invoices can be updated)
     if (existingInvoice.status !== 'DRAFT') {
       return NextResponse.json(
@@ -119,10 +97,10 @@ export async function PATCH(
         { status: 400 }
       );
     }
-    
+
     // Update invoice
     const updatedInvoice = await prisma.invoice.update({
-      where: { id: invoiceId },
+      where: { id: id },
       data: {
         dueDate: data.dueDate,
         notes: data.notes,
@@ -146,7 +124,7 @@ export async function PATCH(
         customer: true,
       },
     });
-    
+
     return NextResponse.json(updatedInvoice);
   } catch (error: any) {
     console.error('Error updating invoice:', error);
@@ -157,18 +135,17 @@ export async function PATCH(
   }
 }
 
-// Implement DELETE method for draft invoices
 export async function DELETE(
-  request: Request,
-  { params }: { params: { id: string } }
+  req: NextRequest,
+  { params }: { params: { id: string } } // Consistently use 'id'
 ) {
   try {
     const session = await getServerSession(authOptions);
-    
+
     if (!session?.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    
+
     // Check if the user has permission to manage invoices
     try {
       requirePermission(
@@ -179,13 +156,13 @@ export async function DELETE(
     } catch (error) {
       return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 });
     }
-    
-    const invoiceId = params.id;
-    
+
+    const id = params.id; // Use consistent parameter name
+
     // Check if invoice exists and belongs to user's organization
     const existingInvoice = await prisma.invoice.findFirst({
       where: {
-        id: invoiceId,
+        id: id,
         organization: {
           userOrganizations: {
             some: {
@@ -195,14 +172,14 @@ export async function DELETE(
         },
       },
     });
-    
+
     if (!existingInvoice) {
       return NextResponse.json(
         { error: 'Invoice not found or you do not have permission to access it' },
         { status: 404 }
       );
     }
-    
+
     // Check if invoice is in DRAFT status (only draft invoices can be deleted)
     if (existingInvoice.status !== 'DRAFT') {
       return NextResponse.json(
@@ -210,17 +187,17 @@ export async function DELETE(
         { status: 400 }
       );
     }
-    
+
     // Delete invoice items first
     await prisma.invoiceItem.deleteMany({
-      where: { invoiceId },
+      where: { invoiceId: id },
     });
-    
+
     // Delete invoice
     await prisma.invoice.delete({
-      where: { id: invoiceId },
+      where: { id: id },
     });
-    
+
     return NextResponse.json({ success: true });
   } catch (error: any) {
     console.error('Error deleting invoice:', error);

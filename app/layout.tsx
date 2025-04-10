@@ -1,15 +1,19 @@
-import { Toaster } from 'sonner';
+import './globals.css';
+import type { Metadata } from 'next';
+import { Inter } from 'next/font/google';
+import { Toaster } from '@/components/ui/toaster';
 import { I18nProvider } from '@/components/i18n/I18nProvider';
 import { RTLProvider } from '@/components/i18n/RTLProvider';
 import { RTLStyles } from '@/components/i18n/RTLStyles';
 import NextAuthProvider from '@/components/auth/next-auth-provider';
 import { ThemeProvider } from '@/components/theme-provider';
 import PayPalProvider from '@/components/providers/PayPalProvider';
-import './globals.css';
 
-export const metadata = {
-  title: 'Billing Management Platform',
-  description: 'Manage your billing and subscriptions'
+const inter = Inter({ subsets: ['latin'] });
+
+export const metadata: Metadata = {
+  title: 'SaaS Billing Platform',
+  description: 'A modern SaaS billing and subscription management platform',
 };
 
 export default function RootLayout({
@@ -25,7 +29,7 @@ export default function RootLayout({
           href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
         />
       </head>
-      <body className="font-sans bg-gray-100">
+      <body className={inter.className}>
         <NextAuthProvider>
           <I18nProvider>
             <RTLProvider>
@@ -48,7 +52,7 @@ export default function RootLayout({
                     {/* Main Content */}
                     <main className="flex-grow">
                       {children}
-                      <Toaster richColors />
+                      <Toaster />
                     </main>
 
                     {/* Footer */}

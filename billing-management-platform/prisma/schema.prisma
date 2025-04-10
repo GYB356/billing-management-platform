@@ -1,0 +1,196 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Plan {
+  id        String   @id @default(cuid())
+  name      String
+  stripeId  String
+  price     Int
+  currency  String
+  features  String[]
+  createdAt DateTime @default(now())
+}
+
+model TaxRate {
+  id         String   @id @default(cuid())
+  country    String
+  region     String?
+  rate       Float
+  isDefault  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model TaxExemption {
+  id         String   @id @default(cuid())
+  userId     String
+  reason     String
+  createdAt  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id])
+}
+
+model TaxHistory {
+  id         String   @id @default(cuid())
+  userId     String
+  rate       Float
+  country    String
+  region     String?
+  date       DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id])
+}
+
+model NotificationTemplate {
+  id          String   @id @default(cuid())
+  type        String   @unique
+  subject     String
+  body        String
+  channels    String[] // ["email", "in-app", "sms"]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  notifications Notification[]
+}
+
+model Notification {
+  id           String   @id @default(cuid())
+  userId       String
+  templateId   String
+  channel      String
+  status       String   // "pending" | "sent" | "failed"
+  sentAt       DateTime?
+  data         Json
+  user         User     @relation(fields: [userId], references: [id])
+  template     NotificationTemplate @relation(fields: [templateId], references: [id])
+  createdAt    DateTime @default(now())
+
+  @@index([userId])
+  @@index([templateId])
+  @@index([status])
+}
+
+model InAppNotification {
+  id        String   @id @default(cuid())
+  userId    String
+  message   String
+  read      Boolean  @default(false)
+  data      Json
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([read])
+}
+
+model User {
+  id                String    @id @default(cuid())
+  name              String
+  email             String    @unique
+  password          String?
+  role              String    @default("user")
+  status            String    @default("active")
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  taxExemptions     TaxExemption[]
+  taxHistory        TaxHistory[]
+  notifications     Notification[]
+  inAppNotifications InAppNotification[]
+  messages          Message[]
+  invoices          Invoice[]  @relation("CustomerInvoices")
+}
+
+model Message {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  content   String
+  read      Boolean  @default(false)
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([read])
+}
+
+model Invoice {
+  id              String   @id @default(cuid())
+  customerId      String
+  subscriptionId  String?
+  number          Int      @unique
+  status          String   // "draft" | "paid" | "unpaid" | "failed" | "refunded"
+  dueDate         DateTime
+  amountDue       Int
+  amountPaid      Int      @default(0)
+  pdfUrl          String?
+  metadata        Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  paidAt          DateTime?
+
+  customer        User     @relation("CustomerInvoices", fields: [customerId], references: [id])
+  subscription    Subscription? @relation(fields: [subscriptionId], references: [id])
+  creditNotes     CreditNote[]
+  items           InvoiceItem[]
+
+  @@index([customerId])
+  @@index([subscriptionId])
+  @@index([status])
+}
+
+model InvoiceItem {
+  id          String   @id @default(cuid())
+  invoiceId   String
+  name        String
+  description String?
+  quantity    Int
+  unitPrice   Int
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id])
+
+  @@index([invoiceId])
+}
+
+model CreditNote {
+  id          String   @id @default(cuid())
+  invoiceId   String
+  amount      Int
+  reason      String
+  createdAt   DateTime @default(now())
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id])
+
+  @@index([invoiceId])
+}
+
+model Subscription {
+  id              String   @id @default(cuid())
+  customerId      String
+  planId          String
+  status          String   // "active" | "canceled" | "past_due" | "unpaid"
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  cancelAtPeriodEnd  Boolean  @default(false)
+  canceledAt       DateTime?
+  trialEnd         DateTime?
+  metadata         Json?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  customer         User     @relation(fields: [customerId], references: [id])
+  plan             Plan     @relation(fields: [planId], references: [id])
+  invoices         Invoice[]
+
+  @@index([customerId])
+  @@index([planId])
+  @@index([status])
+}

@@ -1,3 +1,6 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -7,92 +10,77 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// User and Authentication
+// Existing models
 model User {
-  id              String    @id @default(cuid())
-  name            String?
-  email           String    @unique
-  emailVerified   DateTime?
-  image           String?
-  password        String?
-  twoFactorEnabled Boolean  @default(false)
-  
-  // Relationships
-  organizations   UserOrganization[]
-  subscriptions   Subscription[]
-  preferences     UserPreference?
-  auditLogs       AuditLog[]
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  id          String   @id @default(cuid())
+  name        String?
+  email       String   @unique
+  password    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  // ...existing fields...
 }
 
+// New models added for billing platform
 model Organization {
   id              String   @id @default(cuid())
   name            String
-  taxId           String?
   email           String?
-  phone           String?
-  address         Json?
-  
-  // Billing related
-  stripeCustomerId String?  @unique
-  subscriptions    Subscription[]
-  invoices         Invoice[]
-  
-  // Relationships
-  users           UserOrganization[]
-  portalConfig    CustomerPortalConfig?
+  stripeCustomerId String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+  // ...relationships...
 }
 
-// Subscription and Billing
 model Subscription {
-  id                  String   @id @default(cuid())
-  organizationId      String
+  id                 String   @id @default(cuid())
+  organizationId     String
   planId             String
   status             String
+  stripeSubscriptionId String?
   currentPeriodStart DateTime
   currentPeriodEnd   DateTime
   cancelAtPeriodEnd  Boolean  @default(false)
   trialEndsAt        DateTime?
-  
-  // Stripe related
-  stripeSubscriptionId String? @unique
-  
-  // Relationships
-  organization        Organization @relation(fields: [organizationId], references: [id])
-  plan                Plan        @relation(fields: [planId], references: [id])
-  invoices            Invoice[]
-  usageRecords        UsageRecord[]
-  createdAt          DateTime    @default(now())
-  updatedAt          DateTime    @updatedAt
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  // ...relationships...
 }
 
 model Plan {
-  id          String   @id @default(cuid())
-  name        String
-  description String?
-  price       Float
-  currency    String   @default("USD")
-  interval    String   // monthly, yearly
-  features    Json?    // Array of included features
-  
-  // Relationships
-  subscriptions Subscription[]
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id           String   @id @default(cuid())
+  name         String
+  description  String?
+  price        Float
+  currency     String   @default("USD")
+  interval     String   @default("month")
+  stripePriceId String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  // ...relationships...
 }
 
-// Analytics and Reporting
-model AnalyticsData {
-  id          String   @id @default(cuid())
-  period      DateTime
-  metrics     Json     // MRR, ARR, churn rate, etc.
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+model Invoice {
+  id             String   @id @default(cuid())
+  organizationId String
+  amount         Float
+  currency       String   @default("USD")
+  status         String
+  stripeInvoiceId String?
+  pdfUrl         String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  // ...relationships...
+}
 
-  @@index([period])
+model UsageRecord {
+  id             String   @id @default(cuid())
+  subscriptionId String
+  featureId      String
+  quantity       Float
+  timestamp      DateTime @default(now())
+  // ...relationships...
 }
 
 model Report {
@@ -115,18 +103,6 @@ model Metric {
   tags      Json?
 }
 
-// Notification System
-model NotificationTemplate {
-  id          String   @id @default(cuid())
-  name        String
-  type        String
-  channels    Json     // email, sms, in-app
-  content     Json
-  variables   Json
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-}
-
 model EmailNotification {
   id        String    @id @default(cuid())
   type      String
@@ -138,3 +114,28 @@ model EmailNotification {
   createdAt DateTime  @default(now())
   metadata  Json?
 }
+
+model Webhook {
+  id            String   @id @default(cuid())
+  organizationId String
+  url           String
+  events        String[]
+  secret        String
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model WebhookDelivery {
+  id         String   @id @default(cuid())
+  webhookId  String
+  payload    Json
+  status     String
+  statusCode Int?
+  response   String?
+  error      String?
+  retries    Int      @default(0)
+  createdAt  DateTime @default(now())
+}
+
+// Additional models can be added here

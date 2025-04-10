@@ -74,3 +74,32 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: error.message || 'Failed to fetch subscription' }, { status: 500 });
   }
 }
+
+export async function PUT(request: Request) {
+  try {
+    const session = await getServerSession(authOptions);
+    if (!session?.user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const { organizationId, subscriptionId, updates } = await request.json();
+
+    if (!organizationId || !subscriptionId || !updates) {
+      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+    }
+
+    const result = await subscriptionService.updateSubscription({
+      organizationId,
+      subscriptionId,
+      updates,
+    });
+
+    if (!result.success) {
+      return NextResponse.json({ error: result.error }, { status: 400 });
+    }
+
+    return NextResponse.json({ success: true, subscription: result.subscription });
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message || 'Failed to update subscription' }, { status: 500 });
+  }
+}

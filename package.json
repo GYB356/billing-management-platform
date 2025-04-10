@@ -7,9 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "jest",
-    "test:watch": "jest --watch",
-    "test:coverage": "jest --coverage",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "test:e2e": "jest src/test/smoke.test.ts --forceExit",
     "security-check": "npm audit && npm outdated",
     "prepare": "husky install",
@@ -94,6 +94,7 @@
     "@types/node-fetch": "^2.6.0",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
+    "@vitest/coverage-c8": "^0.32.4",
     "autoprefixer": "^10.4.21",
     "babel-jest": "^29.7.0",
     "dotenv": "^16.4.7",
@@ -111,6 +112,7 @@
     "stripe-cli": "^0.1.0",
     "ts-jest": "^29.3.0",
     "typescript": "^5.0.0",
-    "uuid": "^11.1.0"
+    "uuid": "^11.1.0",
+    "vitest": "^0.32.4"
   }
 }

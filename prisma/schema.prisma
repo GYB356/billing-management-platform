@@ -95,6 +95,26 @@ model AnalyticsData {
   @@index([period])
 }
 
+model Report {
+  id          String   @id @default(cuid())
+  type        String
+  format      String
+  status      String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdBy   String
+  downloadUrl String?
+  metadata    Json?
+}
+
+model Metric {
+  id        String   @id @default(cuid())
+  name      String
+  value     Float
+  timestamp DateTime @default(now())
+  tags      Json?
+}
+
 // Notification System
 model NotificationTemplate {
   id          String   @id @default(cuid())
@@ -105,4 +125,16 @@ model NotificationTemplate {
   variables   Json
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+model EmailNotification {
+  id        String    @id @default(cuid())
+  type      String
+  status    String
+  to        String
+  subject   String
+  body      String
+  sentAt    DateTime?
+  createdAt DateTime  @default(now())
+  metadata  Json?
 }

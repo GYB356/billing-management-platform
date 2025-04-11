@@ -1,0 +1,51 @@
+{
+  "formats": {
+    "title": "Configurações de Formato",
+    "description": "Personalize como datas, números e moedas são exibidos",
+    "date": {
+      "label": "Formato de Data",
+      "short": "Curto (DD/MM/AAAA)",
+      "long": "Longo (Dia Mês Ano)",
+      "numeric": "Numérico (AAAA-MM-DD)"
+    },
+    "number": {
+      "label": "Formato de Número",
+      "standard": "Padrão (1.234,56)",
+      "compact": "Compacto (1,2K)",
+      "scientific": "Científico (1,23e+3)"
+    },
+    "currency": {
+      "label": "Formato de Moeda",
+      "symbol": "Símbolo (R$ 1.234,56)",
+      "code": "Código (BRL 1.234,56)",
+      "name": "Nome (1.234,56 reais)"
+    },
+    "save": "Salvar Configurações",
+    "saveSuccess": "Configurações de formato salvas com sucesso"
+  },
+  "settings": {
+    "formats": {
+      "title": "Configurações de Formato",
+      "description": "Personalize como as informações são exibidas"
+    }
+  },
+  "errors": {
+    "fetchPreferences": "Falha ao carregar configurações de formato",
+    "savePreferences": "Falha ao salvar configurações de formato"
+  },
+  "invoice": {
+    "title": "Fatura Nº {{number}}",
+    "status": {
+      "paid": "Pago",
+      "pending": "Pendente",
+      "overdue": "Atrasado"
+    },
+    "issueDate": "Data de Emissão",
+    "dueDate": "Data de Vencimento",
+    "items": "Itens",
+    "quantity": "Quantidade: {{count}}",
+    "subtotal": "Subtotal",
+    "tax": "Imposto",
+    "total": "Total"
+  }
+} 

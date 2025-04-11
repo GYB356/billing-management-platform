@@ -1,0 +1,51 @@
+{
+  "formats": {
+    "title": "Format-Einstellungen",
+    "description": "Passen Sie an, wie Datum, Zahlen und Währungen angezeigt werden",
+    "date": {
+      "label": "Datumsformat",
+      "short": "Kurz (TT.MM.JJJJ)",
+      "long": "Lang (Tag Monat Jahr)",
+      "numeric": "Numerisch (JJJJ-MM-TT)"
+    },
+    "number": {
+      "label": "Zahlenformat",
+      "standard": "Standard (1.234,56)",
+      "compact": "Kompakt (1,2K)",
+      "scientific": "Wissenschaftlich (1,23e+3)"
+    },
+    "currency": {
+      "label": "Währungsformat",
+      "symbol": "Symbol (1.234,56 €)",
+      "code": "Code (EUR 1.234,56)",
+      "name": "Name (1.234,56 Euro)"
+    },
+    "save": "Einstellungen Speichern",
+    "saveSuccess": "Format-Einstellungen erfolgreich gespeichert"
+  },
+  "settings": {
+    "formats": {
+      "title": "Format-Einstellungen",
+      "description": "Anpassung der Informationsanzeige"
+    }
+  },
+  "errors": {
+    "fetchPreferences": "Fehler beim Laden der Format-Einstellungen",
+    "savePreferences": "Fehler beim Speichern der Format-Einstellungen"
+  },
+  "invoice": {
+    "title": "Rechnung Nr. {{number}}",
+    "status": {
+      "paid": "Bezahlt",
+      "pending": "Ausstehend",
+      "overdue": "Überfällig"
+    },
+    "issueDate": "Ausstellungsdatum",
+    "dueDate": "Fälligkeitsdatum",
+    "items": "Positionen",
+    "quantity": "Menge: {{count}}",
+    "subtotal": "Zwischensumme",
+    "tax": "Steuer",
+    "total": "Gesamtbetrag"
+  }
+} 

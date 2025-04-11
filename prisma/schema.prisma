@@ -1,0 +1,332 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Existing models
+model User {
+  id          String   @id @default(cuid())
+  name        String?
+  email       String   @unique
+  password    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  notifications Notification[]
+  // ...existing fields...
+}
+
+// New models added for billing platform
+model Organization {
+  id              String   @id @default(cuid())
+  name            String
+  email           String?
+  stripeCustomerId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  notifications   Notification[]
+  // ...relationships...
+}
+
+model Customer {
+  id                String        @id @default(cuid())
+  userId            String
+  stripeCustomerId  String?      @unique
+  name              String?
+  email             String
+  payments          Payment[]
+  subscription      Subscription?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  @@index([userId])
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  TRIALING
+  PAST_DUE
+  CANCELED
+  PAUSED
+  INCOMPLETE
+  INCOMPLETE_EXPIRED
+}
+
+model Subscription {
+  id                String    @id @default(cuid())
+  customerId        String    @unique
+  customer          Customer  @relation(fields: [customerId], references: [id])
+  status            SubscriptionStatus
+  planId            String
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  cancelAtPeriodEnd  Boolean  @default(false)
+  pausedAt          DateTime?
+  resumesAt         DateTime?
+  trialEndsAt       DateTime?
+  payments          Payment[]
+  usageRecords      UsageRecord[]
+  billingCycleAnchor DateTime
+  proration         Json?
+  metadata          Json?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([customerId])
+}
+
+model Plan {
+  id           String   @id @default(cuid())
+  name         String
+  description  String?
+  price        Float
+  currency     String   @default("USD")
+  interval     String   @default("month")
+  stripePriceId String?
+  isActive     Boolean  @default(true)
+  features     PlanFeature[]
+  usageLimits  UsageLimit[]
+  sortOrder    Int      @default(0)
+  metadata     Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model PlanFeature {
+  id          String   @id @default(cuid())
+  planId      String
+  plan        Plan     @relation(fields: [planId], references: [id])
+  name        String
+  description String?
+  included    Boolean  @default(true)
+  value       String?
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([planId])
+}
+
+model UsageLimit {
+  id          String   @id @default(cuid())
+  planId      String
+  plan        Plan     @relation(fields: [planId], references: [id])
+  featureKey  String
+  limit       Float
+  interval    String   @default("month")
+  overage     Boolean  @default(false)
+  overagePrice Float?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([planId])
+  @@index([featureKey])
+}
+
+model Invoice {
+  id             String   @id @default(cuid())
+  organizationId String
+  amount         Float
+  currency       String   @default("USD")
+  status         String
+  stripeInvoiceId String?
+  pdfUrl         String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  // ...relationships...
+}
+
+model UsageRecord {
+  id             String   @id @default(cuid())
+  subscriptionId String
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id])
+  featureKey     String
+  quantity       Float
+  timestamp      DateTime @default(now())
+  billingPeriodStart DateTime
+  billingPeriodEnd   DateTime
+  processed      Boolean  @default(false)
+  metadata       Json?
+
+  @@index([subscriptionId])
+  @@index([featureKey])
+  @@index([billingPeriodStart, billingPeriodEnd])
+}
+
+model Report {
+  id          String   @id @default(cuid())
+  type        String
+  format      String
+  status      String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdBy   String
+  downloadUrl String?
+  metadata    Json?
+}
+
+model Metric {
+  id        String   @id @default(cuid())
+  name      String
+  value     Float
+  timestamp DateTime @default(now())
+  tags      Json?
+}
+
+model EmailNotification {
+  id        String    @id @default(cuid())
+  type      String
+  status    String
+  to        String
+  subject   String
+  body      String
+  sentAt    DateTime?
+  createdAt DateTime  @default(now())
+  metadata  Json?
+}
+
+model Webhook {
+  id            String   @id @default(cuid())
+  organizationId String
+  organization  Organization @relation(fields: [organizationId], references: [id])
+  url           String
+  secret        String
+  events        String[]
+  status        String   @default("ACTIVE")
+  retryConfig   Json
+  lastSuccess   DateTime?
+  lastFailure   DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  deliveries    WebhookDelivery[]
+
+  @@index([organizationId])
+}
+
+model WebhookDelivery {
+  id         String   @id @default(cuid())
+  webhookId  String
+  webhook    Webhook  @relation(fields: [webhookId], references: [id])
+  payload    Json
+  status     String
+  statusCode Int?
+  response   String?
+  error      String?
+  retries    Int      @default(0)
+  createdAt  DateTime @default(now())
+
+  @@index([webhookId])
+}
+
+model Payment {
+  id                    String        @id @default(cuid())
+  customerId           String
+  customer             Customer      @relation(fields: [customerId], references: [id])
+  amount               Float
+  currency             String        @default("usd")
+  status               String        // succeeded, failed, pending
+  errorMessage         String?
+  stripePaymentIntentId String?
+  subscriptionId       String?
+  subscription         Subscription? @relation(fields: [subscriptionId], references: [id])
+  retries              PaymentRetry[]
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+
+  @@index([customerId])
+  @@index([subscriptionId])
+}
+
+model PaymentRetry {
+  id           String   @id @default(cuid())
+  payment      Payment  @relation(fields: [paymentId], references: [id])
+  paymentId    String
+  attempt      Int
+  scheduledFor DateTime
+  status       String   @default("pending") // pending, success, failed
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([paymentId])
+}
+
+enum NotificationType {
+  INFO
+  SUCCESS
+  WARNING
+  ERROR
+  PAYMENT_FAILED
+  SUBSCRIPTION_RENEWAL
+  USAGE_THRESHOLD
+}
+
+enum NotificationChannel {
+  EMAIL
+  IN_APP
+  SMS
+  WEBHOOK
+}
+
+model Notification {
+  id             String             @id @default(cuid())
+  type           NotificationType
+  userId         String?
+  organizationId String?
+  title          String
+  message        String
+  data           Json?
+  read           Boolean            @default(false)
+  channels       NotificationChannel[]
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  organization   Organization?      @relation(fields: [organizationId], references: [id])
+  user           User?             @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([organizationId])
+  @@index([type])
+}
+
+model TaxCalculation {
+  id          String   @id @default(cuid())
+  customerId  String
+  customer    Customer @relation(fields: [customerId], references: [id])
+  amount      Float
+  taxAmount   Float
+  details     Json
+  createdAt   DateTime @default(now())
+
+  @@index([customerId])
+}
+
+model ExchangeRate {
+  id           String   @id @default(cuid())
+  fromCurrency String
+  toCurrency   String
+  rate         Float
+  updatedAt    DateTime @default(now())
+
+  @@unique([fromCurrency, toCurrency])
+}
+
+model ApiKey {
+  id            String    @id @default(cuid())
+  organizationId String
+  organization  Organization @relation(fields: [organizationId], references: [id])
+  name          String
+  key           String
+  scopes        String[]
+  lastUsed      DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([organizationId])
+}
+
+// Additional models can be added here

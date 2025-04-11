@@ -1,0 +1,301 @@
+openapi: 3.0.0
+info:
+  title: Tax Management API
+  version: 1.0.0
+  description: API endpoints for tax rate management, calculation, and reporting
+
+paths:
+  /api/tax/calculate:
+    post:
+      summary: Calculate tax for a transaction
+      description: Calculate applicable taxes based on provided parameters
+      tags:
+        - Tax
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - amount
+                - countryCode
+                - customerType
+                - currency
+              properties:
+                amount:
+                  type: number
+                  description: Transaction amount
+                countryCode:
+                  type: string
+                  description: ISO country code
+                stateCode:
+                  type: string
+                  description: State/province code
+                customerType:
+                  type: string
+                  enum: [INDIVIDUAL, BUSINESS]
+                vatNumber:
+                  type: string
+                  description: VAT registration number
+                productType:
+                  type: string
+                  description: Type of product/service
+                currency:
+                  type: string
+                  description: ISO currency code
+      responses:
+        200:
+          description: Tax calculation result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  taxAmount:
+                    type: number
+                  taxRate:
+                    type: number
+                  breakdown:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        type:
+                          type: string
+                        rate:
+                          type: number
+                        amount:
+                          type: number
+                        description:
+                          type: string
+        401:
+          description: Unauthorized
+        400:
+          description: Invalid request data
+
+  /api/tax/validate:
+    post:
+      summary: Validate tax ID
+      description: Validate a tax identification number
+      tags:
+        - Tax
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - taxId
+                - countryCode
+              properties:
+                taxId:
+                  type: string
+                countryCode:
+                  type: string
+                type:
+                  type: string
+                  enum: [VAT, GST, HST, PST, SALES_TAX]
+                  default: VAT
+      responses:
+        200:
+          description: Validation result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  isValid:
+                    type: boolean
+                  details:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      address:
+                        type: string
+                      validatedAt:
+                        type: string
+                        format: date-time
+                      validUntil:
+                        type: string
+                        format: date-time
+        401:
+          description: Unauthorized
+        400:
+          description: Invalid request data
+
+  /api/tax/reports:
+    post:
+      summary: Generate tax report
+      description: Generate a tax report for a specified period
+      tags:
+        - Tax
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - startDate
+                - endDate
+              properties:
+                startDate:
+                  type: string
+                  format: date
+                endDate:
+                  type: string
+                  format: date
+                groupBy:
+                  type: string
+                  enum: [day, week, month, quarter, year]
+                format:
+                  type: string
+                  enum: [json, csv, pdf]
+                  default: json
+      responses:
+        200:
+          description: Tax report
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  period:
+                    type: object
+                    properties:
+                      startDate:
+                        type: string
+                        format: date
+                      endDate:
+                        type: string
+                        format: date
+                  summary:
+                    type: object
+                    properties:
+                      totalTaxAmount:
+                        type: number
+                      totalRevenue:
+                        type: number
+                      averageTaxRate:
+                        type: number
+                      taxableTransactions:
+                        type: integer
+                      exemptTransactions:
+                        type: integer
+                  breakdown:
+                    type: object
+                    properties:
+                      byType:
+                        type: object
+                        additionalProperties:
+                          type: number
+                      byRegion:
+                        type: object
+                        additionalProperties:
+                          type: number
+                      periodic:
+                        type: object
+                        additionalProperties:
+                          type: object
+                          properties:
+                            revenue:
+                              type: number
+                            tax:
+                              type: number
+                            transactionCount:
+                              type: integer
+            text/csv:
+              schema:
+                type: string
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        401:
+          description: Unauthorized
+        400:
+          description: Invalid request data
+
+components:
+  schemas:
+    TaxRate:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        rate:
+          type: number
+        type:
+          type: string
+          enum: [VAT, GST, HST, PST, SALES_TAX]
+        country:
+          type: string
+        state:
+          type: string
+        city:
+          type: string
+        isActive:
+          type: boolean
+        stripeId:
+          type: string
+
+    TaxRule:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        type:
+          type: string
+          enum: [MODIFIER, OVERRIDE]
+        priority:
+          type: integer
+        conditions:
+          type: array
+          items:
+            type: object
+        modifier:
+          type: number
+        override:
+          type: number
+        countryCode:
+          type: string
+        stateCode:
+          type: string
+        isActive:
+          type: boolean
+
+    TaxExemption:
+      type: object
+      properties:
+        id:
+          type: string
+        organizationId:
+          type: string
+        taxType:
+          type: string
+        certificateNumber:
+          type: string
+        certificateUrl:
+          type: string
+        validUntil:
+          type: string
+          format: date-time
+        isActive:
+          type: boolean

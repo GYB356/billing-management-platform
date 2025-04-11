@@ -1,0 +1,18 @@
+// This file is disabled to allow Next.js to use SWC by default
+// If you need to enable Babel, rename this file back to .babelrc
+{
+  "presets": ["next/babel"],
+  "plugins": [
+    ["module-resolver", {
+      "root": ["./"],
+      "alias": {
+        "@": ".",
+        "@/app": "./app",
+        "@/components": "./components",
+        "@/lib": "./lib"
+      }
+    }],
+    ["@babel/plugin-proposal-decorators", { "legacy": true }],
+    "@babel/plugin-transform-class-properties"
+  ]
+} 

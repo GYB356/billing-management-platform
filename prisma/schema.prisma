@@ -18,11 +18,11 @@ model User {
   password    String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
-<<<<<<< HEAD
   notifications Notification[]
-=======
->>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
+  role        String    @default("user")
   // ...existing fields...
+
+  @@index([email])
 }
 
 // New models added for billing platform
@@ -33,9 +33,9 @@ model Organization {
   stripeCustomerId String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
-<<<<<<< HEAD
   notifications   Notification[]
-  // ...relationships...
+  webhooks        Webhook[]
+  apiKeys         ApiKey[]
 }
 
 model Customer {
@@ -46,6 +46,7 @@ model Customer {
   email             String
   payments          Payment[]
   subscription      Subscription?
+  taxCalculations   TaxCalculation[]
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
 
@@ -63,44 +64,29 @@ enum SubscriptionStatus {
 }
 
 model Subscription {
-  id                String    @id @default(cuid())
-  customerId        String    @unique
-  customer          Customer  @relation(fields: [customerId], references: [id])
-  status            SubscriptionStatus
-  planId            String
-  currentPeriodStart DateTime
-  currentPeriodEnd   DateTime
-  cancelAtPeriodEnd  Boolean  @default(false)
-  pausedAt          DateTime?
-  resumesAt         DateTime?
-  trialEndsAt       DateTime?
-  payments          Payment[]
-  usageRecords      UsageRecord[]
-  billingCycleAnchor DateTime
-  proration         Json?
-  metadata          Json?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  id                   String             @id @default(cuid())
+  customerId           String             @unique
+  customer             Customer           @relation(fields: [customerId], references: [id])
+  status               SubscriptionStatus
+  planId              String
+  plan                Plan               @relation(fields: [planId], references: [id])
+  stripeSubscriptionId String?           @unique
+  currentPeriodStart   DateTime
+  currentPeriodEnd    DateTime
+  cancelAtPeriodEnd   Boolean           @default(false)
+  cancelledAt         DateTime?
+  pausedAt            DateTime?
+  resumesAt           DateTime?
+  trialEndsAt         DateTime?
+  payments            Payment[]
+  usageRecords        UsageRecord[]
+  billingCycleAnchor  DateTime
+  proration           Json?
+  metadata            Json?
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
 
   @@index([customerId])
-=======
-  // ...relationships...
-}
-
-model Subscription {
-  id                 String   @id @default(cuid())
-  organizationId     String
-  planId             String
-  status             String
-  stripeSubscriptionId String?
-  currentPeriodStart DateTime
-  currentPeriodEnd   DateTime
-  cancelAtPeriodEnd  Boolean  @default(false)
-  trialEndsAt        DateTime?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
-  // ...relationships...
->>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
 }
 
 model Plan {
@@ -112,13 +98,13 @@ model Plan {
   interval     String   @default("month")
   stripePriceId String?
   isActive     Boolean  @default(true)
-<<<<<<< HEAD
   features     PlanFeature[]
   usageLimits  UsageLimit[]
   sortOrder    Int      @default(0)
   metadata     Json?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+  subscriptions Subscription[]
 }
 
 model PlanFeature {
@@ -150,11 +136,6 @@ model UsageLimit {
 
   @@index([planId])
   @@index([featureKey])
-=======
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  // ...relationships...
->>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
 }
 
 model Invoice {
@@ -173,7 +154,6 @@ model Invoice {
 model UsageRecord {
   id             String   @id @default(cuid())
   subscriptionId String
-<<<<<<< HEAD
   subscription   Subscription @relation(fields: [subscriptionId], references: [id])
   featureKey     String
   quantity       Float
@@ -186,12 +166,6 @@ model UsageRecord {
   @@index([subscriptionId])
   @@index([featureKey])
   @@index([billingPeriodStart, billingPeriodEnd])
-=======
-  featureId      String
-  quantity       Float
-  timestamp      DateTime @default(now())
-  // ...relationships...
->>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
 }
 
 model Report {
@@ -229,7 +203,6 @@ model EmailNotification {
 model Webhook {
   id            String   @id @default(cuid())
   organizationId String
-<<<<<<< HEAD
   organization  Organization @relation(fields: [organizationId], references: [id])
   url           String
   secret        String
@@ -243,23 +216,12 @@ model Webhook {
   deliveries    WebhookDelivery[]
 
   @@index([organizationId])
-=======
-  url           String
-  events        String[]
-  secret        String
-  isActive      Boolean  @default(true)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
->>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
 }
 
 model WebhookDelivery {
   id         String   @id @default(cuid())
   webhookId  String
-<<<<<<< HEAD
   webhook    Webhook  @relation(fields: [webhookId], references: [id])
-=======
->>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
   payload    Json
   status     String
   statusCode Int?
@@ -267,7 +229,6 @@ model WebhookDelivery {
   error      String?
   retries    Int      @default(0)
   createdAt  DateTime @default(now())
-<<<<<<< HEAD
 
   @@index([webhookId])
 }
@@ -278,9 +239,11 @@ model Payment {
   customer             Customer      @relation(fields: [customerId], references: [id])
   amount               Float
   currency             String        @default("usd")
-  status               String        // succeeded, failed, pending
+  status               PaymentStatus
   errorMessage         String?
   stripePaymentIntentId String?
+  stripeChargeId       String?      @unique
+  stripeInvoiceId      String?      @unique
   subscriptionId       String?
   subscription         Subscription? @relation(fields: [subscriptionId], references: [id])
   retries              PaymentRetry[]
@@ -375,8 +338,54 @@ model ApiKey {
   updatedAt     DateTime  @updatedAt
 
   @@index([organizationId])
-=======
->>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
+}
+
+model StripeEvent {
+  id        String   @id @default(cuid())
+  eventId   String   @unique
+  type      String
+  data      Json
+  created   DateTime
+}
+
+model MarketingExpense {
+  id        String   @id @default(cuid())
+  amount    Float
+  date      DateTime
+  source    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum PaymentStatus {
+  SUCCEEDED
+  FAILED
+  PENDING
+  REFUNDED
+}
+
+model BillingActivity {
+  id          String   @id @default(cuid())
+  timestamp   DateTime @default(now())
+  amount      Float
+  description String
+  status      String   @default("success")
+  customerId  String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([customerId])
+  @@index([timestamp])
+}
+
+model MetricData {
+  id        String   @id @default(cuid())
+  timestamp DateTime @default(now())
+  type      String
+  value     Float
+  createdAt DateTime @default(now())
+
+  @@index([type, timestamp])
 }
 
 // Additional models can be added here

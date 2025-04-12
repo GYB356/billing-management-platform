@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import {
@@ -15,7 +15,9 @@ const locales = {
   'de-DE': de,
   'fr-FR': fr,
   'ja-JP': ja,
-};
+} as const;
+
+type SupportedLocale = keyof typeof locales;
 
 interface LocaleConfig {
   currency: string;
@@ -24,53 +26,91 @@ interface LocaleConfig {
   timezone: string;
 }
 
+const DEFAULT_LOCALE: SupportedLocale = 'en-US';
+const DEFAULT_CURRENCY = 'USD';
+
 export function useInternationalization() {
-  const { data: userLocale = 'en-US' } = useQuery({
+  const { data: userLocale = DEFAULT_LOCALE, error: localeError } = useQuery({
     queryKey: ['userLocale'],
     queryFn: async () => {
+      try {
       const response = await fetch('/api/user/locale');
       if (!response.ok) {
-        throw new Error('Failed to fetch user locale');
+          throw new Error(`HTTP error! status: ${response.status}`);
       }
       const data = await response.json();
-      return data.locale;
+        return data.locale as SupportedLocale;
+      } catch (error) {
+        console.error('Failed to fetch user locale:', error);
+        return DEFAULT_LOCALE;
+      }
     },
+    retry: 2,
+    staleTime: 5 * 60 * 1000, // Cache for 5 minutes
   });
 
-  const { data: localeConfig } = useQuery<LocaleConfig>({
+  const { data: localeConfig, error: configError } = useQuery<LocaleConfig>({
     queryKey: ['localeConfig', userLocale],
     queryFn: async () => {
+      try {
       const response = await fetch(`/api/locales/${userLocale}/config`);
       if (!response.ok) {
-        throw new Error('Failed to fetch locale config');
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        return response.json();
+      } catch (error) {
+        console.error('Failed to fetch locale config:', error);
+        return {
+          currency: DEFAULT_CURRENCY,
+          dateFormat: 'PPP',
+          numberFormat: 'decimal',
+          timezone: 'UTC',
+        };
       }
-      return response.json();
     },
+    retry: 2,
+    staleTime: 5 * 60 * 1000, // Cache for 5 minutes
   });
 
-  const formatDate = (date: string | Date, formatStr = 'PPP') => {
+  const formatDate = useCallback((date: string | Date, formatStr = 'PPP') => {
     const dateObj = typeof date === 'string' ? new Date(date) : date;
+    try {
     return format(dateObj, formatStr, {
-      locale: locales[userLocale as keyof typeof locales],
-    });
-  };
+        locale: locales[userLocale],
+      });
+    } catch (error) {
+      console.error('Error formatting date:', error);
+      return format(dateObj, formatStr, { locale: locales[DEFAULT_LOCALE] });
+    }
+  }, [userLocale]);
 
-  const formatNumber = (number: number) => {
+  const formatNumber = useCallback((number: number) => {
+    try {
     return new Intl.NumberFormat(userLocale, {
       style: 'decimal',
       minimumFractionDigits: 0,
       maximumFractionDigits: 2,
     }).format(number);
-  };
+    } catch (error) {
+      console.error('Error formatting number:', error);
+      return number.toString();
+    }
+  }, [userLocale]);
 
-  const formatCurrency = (amount: number, currency?: string) => {
+  const formatCurrency = useCallback((amount: number, currency?: string) => {
+    try {
     return new Intl.NumberFormat(userLocale, {
       style: 'currency',
-      currency: currency || localeConfig?.currency || 'USD',
+        currency: currency || localeConfig?.currency || DEFAULT_CURRENCY,
     }).format(amount);
-  };
+    } catch (error) {
+      console.error('Error formatting currency:', error);
+      return `${currency || DEFAULT_CURRENCY} ${amount.toFixed(2)}`;
+    }
+  }, [userLocale, localeConfig]);
 
-  const formatRelativeTime = (date: Date) => {
+  const formatRelativeTime = useCallback((date: Date) => {
+    try {
     const now = new Date();
     const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
 
@@ -88,7 +128,11 @@ export function useInternationalization() {
       return rtf.format(-Math.floor(diffInSeconds / 3600), 'hour');
     }
     return rtf.format(-Math.floor(diffInSeconds / 86400), 'day');
-  };
+    } catch (error) {
+      console.error('Error formatting relative time:', error);
+      return formatDate(date);
+    }
+  }, [userLocale, formatDate]);
 
   return {
     locale: userLocale,
@@ -97,5 +141,7 @@ export function useInternationalization() {
     formatNumber,
     formatCurrency,
     formatRelativeTime,
+    isLoading: !localeConfig,
+    hasError: Boolean(localeError || configError),
   };
 } 

@@ -8,6 +8,8 @@ import { RTLStyles } from '@/components/i18n/RTLStyles';
 import NextAuthProvider from '@/components/auth/next-auth-provider';
 import { ThemeProvider } from '@/components/theme-provider';
 import PayPalProvider from '@/components/providers/PayPalProvider';
+import { Providers } from './providers';
+import { ServiceWorkerRegistration } from '@/components/ServiceWorkerRegistration';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -24,12 +26,19 @@ export default function RootLayout({
   return (
     <html lang="en">
       <head>
+        <meta charSet="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta name="theme-color" content="#000000" />
+        <link rel="manifest" href="/manifest.json" />
+        <link rel="icon" href="/favicon.ico" />
+        <title>Billing Management Platform</title>
         <link 
           rel="stylesheet" 
           href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
         />
       </head>
       <body className={inter.className}>
+        <ServiceWorkerRegistration />
         <NextAuthProvider>
           <I18nProvider>
             <RTLProvider>
@@ -51,7 +60,7 @@ export default function RootLayout({
                     
                     {/* Main Content */}
                     <main className="flex-grow">
-                      {children}
+                      <Providers>{children}</Providers>
                       <Toaster />
                     </main>
 

@@ -1,130 +1,61 @@
-const CACHE_NAME = 'i18n-cache-v1';
-const STATIC_CACHE_NAME = 'static-cache-v1';
+const CACHE_NAME = 'billing-platform-cache-v1';
+const RUNTIME = 'runtime';
 
-// Common languages that are preloaded
-const COMMON_LANGUAGES = ['en', 'fr', 'es', 'de'];
-
-// Less common languages that are cached on first use
-const LESS_COMMON_LANGUAGES = ['ar', 'he', 'zh', 'ja', 'ko', 'ru', 'pt', 'it', 'nl', 'pl'];
-
-// Files to cache
-const STATIC_FILES = [
-  '/offline.html',
-  '/styles/main.css',
-  '/scripts/i18n.js'
+// Resources to pre-cache
+const PRECACHE_URLS = [
+  '/',
+  '/index.html',
+  '/static/css/main.css',
+  '/static/js/main.js',
+  '/manifest.json',
+  '/favicon.ico',
+  '/offline.html'
 ];
 
-// Cache common language files on install
-self.addEventListener('install', (event) => {
+// The install handler takes care of precaching the resources we always need
+self.addEventListener('install', event => {
   event.waitUntil(
-    Promise.all([
-      // Cache common language files
-      caches.open(CACHE_NAME).then((cache) => {
-        return Promise.all(
-          COMMON_LANGUAGES.map((lang) =>
-            cache.add(`/locales/${lang}/translation.json`)
-          )
-        );
-      }),
-      // Cache static assets
-      caches.open(STATIC_CACHE_NAME).then((cache) => {
-        return cache.addAll([
-          '/images/logo.png',
-          '/images/icons/language.svg',
-          '/css/main.css',
-          '/js/main.js'
-        ]);
-      })
-    ])
+    caches.open(CACHE_NAME)
+      .then(cache => cache.addAll(PRECACHE_URLS))
+      .then(self.skipWaiting())
   );
 });
 
-// Clean up old caches on activate
-self.addEventListener('activate', (event) => {
+// The activate handler takes care of cleaning up old caches
+self.addEventListener('activate', event => {
+  const currentCaches = [CACHE_NAME, RUNTIME];
   event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames
-          .filter((name) => name !== CACHE_NAME && name !== STATIC_CACHE_NAME)
-          .map((name) => caches.delete(name))
-      );
-    })
+    caches.keys().then(cacheNames => {
+      return cacheNames.filter(cacheName => !currentCaches.includes(cacheName));
+    }).then(cachesToDelete => {
+      return Promise.all(cachesToDelete.map(cacheToDelete => {
+        return caches.delete(cacheToDelete);
+      }));
+    }).then(() => self.clients.claim())
   );
 });
 
-// Handle fetch requests
-self.addEventListener('fetch', (event) => {
-  // Only handle GET requests
-  if (event.request.method !== 'GET') return;
-
-  const url = new URL(event.request.url);
-  
-  // Handle translation file requests
-  if (url.pathname.startsWith('/locales/') && url.pathname.endsWith('/translation.json')) {
+// The fetch handler serves responses from a cache
+self.addEventListener('fetch', event => {
+  // Skip cross-origin requests
+  if (event.request.url.startsWith(self.location.origin)) {
     event.respondWith(
-      caches.match(event.request).then((response) => {
-        // Return cached response if available
-        if (response) {
-          return response;
+      caches.match(event.request).then(cachedResponse => {
+        if (cachedResponse) {
+          return cachedResponse;
         }
 
-        // Fetch and cache new translation
-        return fetch(event.request).then((response) => {
-          if (!response.ok) {
-            throw new Error('Network response was not ok');
-          }
-
-          // Clone the response before caching
-          const responseToCache = response.clone();
-
-          // Cache the response
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(event.request, responseToCache);
-          });
-
+        return caches.open(RUNTIME).then(cache => {
+          return fetch(event.request).then(response => {
+            // Put a copy of the response in the runtime cache
+            return cache.put(event.request, response.clone()).then(() => {
           return response;
+        });
+          });
         });
       })
     );
-    return;
   }
-
-  // Handle static asset requests
-  if (url.pathname.startsWith('/images/') || url.pathname.startsWith('/css/') || url.pathname.startsWith('/js/')) {
-    event.respondWith(
-      caches.match(event.request).then((response) => {
-        // Return cached response if available
-        if (response) {
-          return response;
-        }
-
-        // Fetch and cache new static asset
-        return fetch(event.request).then((response) => {
-          if (!response.ok) {
-            throw new Error('Network response was not ok');
-          }
-
-          // Clone the response before caching
-          const responseToCache = response.clone();
-
-          // Cache the response
-          caches.open(STATIC_CACHE_NAME).then((cache) => {
-            cache.put(event.request, responseToCache);
-          });
-
-          return response;
-        });
-      })
-    );
-    return;
-  }
-
-  // For all other requests, try network first, then cache
-  event.respondWith(
-    fetch(event.request).catch(() => {
-      return caches.match(event.request);
-    })
-  );
 });
 
 // Handle background sync for failed translation updates

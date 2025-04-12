@@ -1,86 +1,168 @@
-# Billing Platform
-
-AI-powered billing platform with anomaly detection and automated reporting.
-
-## Quick Start
-
-```bash
-# Install dependencies
-npm install
-
-# Set up environment variables
-cp .env.example .env
-
-# Start development server
-npm run dev
-```
-
-## Environment Variables
-
-Required environment variables:
-
-```env
-# OpenAI Configuration
-OPENAI_API_KEY=your-openai-api-key-here
-
-# Email Configuration
-SMTP_HOST=smtp.example.com
-SMTP_PORT=587
-SMTP_USER=your-username
-SMTP_PASSWORD=your-password
-EMAIL_FROM=noreply@example.com
-ADMIN_EMAIL=admin@example.com
-
-# Database
-DATABASE_URL="postgresql://user:password@localhost:5432/billing_platform"
-
-# Security
-JWT_SECRET=your-secure-jwt-secret
-```
-
-## API Documentation
-
-API documentation is available at `http://localhost:3000/api-docs` when running the server.
-
-### Key Endpoints
-
-1. **Billing Assistant**
-   ```http
-   POST /api/billing/ask
-   Authorization: Bearer <token>
-   {
-     "question": "How do I update my billing info?"
-   }
-   ```
-
-2. **Metrics Collection**
-   ```http
-   POST /api/metrics/collect
-   Authorization: Bearer <token>
-   {
-     "type": "cpu",
-     "value": 85.5
-   }
-   ```
+# Advanced Billing System
 
 ## Features
 
-- AI-powered billing assistance
-- Automated anomaly detection
-- Weekly billing summaries
-- Email notifications and alerts
+### 1. Billing Rule Builder
+- Visual rule builder with templates
+- Customizable conditions and actions
+- Support for multiple pricing models
+- Real-time preview and validation
 
-## Development
+### 2. Payment Processing
+- Stripe integration for card payments
+- BitPay for cryptocurrency
+- Wyre for alternative payments
+- Webhook handlers for all processors
 
-1. Install dependencies: `npm install`
-2. Set up environment variables
-3. Run database migrations: `npx prisma migrate dev`
-4. Start development server: `npm run dev`
-5. Run tests: `npm test`
+### 3. Analytics and Reporting
+- Interactive metric dashboards
+- Plan comparison tools
+- Usage tracking
+- Revenue analytics
 
-## Security Notes
+## Getting Started
 
-- Keep all API keys and secrets secure
-- Use environment variables for sensitive data
-- Enable authentication for all endpoints
-- Rotate secrets regularly 
+1. Install dependencies:
+```bash
+npm install
+```
+
+2. Set up environment variables:
+```env
+# Stripe Configuration
+STRIPE_SECRET_KEY=sk_test_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+
+# BitPay Configuration
+BITPAY_API_KEY=...
+BITPAY_WEBHOOK_SECRET=...
+
+# Wyre Configuration
+WYRE_API_KEY=...
+WYRE_SECRET_KEY=...
+WYRE_ACCOUNT_ID=...
+WYRE_WEBHOOK_SECRET=...
+```
+
+3. Run the development server:
+```bash
+npm run dev
+```
+
+## Usage
+
+### Billing Rule Builder
+
+```typescript
+import RuleBuilder from '@/app/components/billing/RuleBuilder';
+
+export default function BillingPage() {
+  const handleRuleSave = (rule) => {
+    // Handle the saved rule
+    console.log('Saved rule:', rule);
+  };
+
+  return <RuleBuilder onSave={handleRuleSave} />;
+}
+```
+
+### Billing Metrics
+
+```typescript
+import BillingMetrics from '@/app/components/billing/BillingMetrics';
+
+const metrics = [
+  {
+    id: 'revenue',
+    name: 'Monthly Revenue',
+    value: 12500,
+    unit: 'currency',
+    trend: 15.5,
+    history: [
+      { date: '2024-01-01', value: 10000 },
+      { date: '2024-02-01', value: 11200 },
+      { date: '2024-03-01', value: 12500 }
+    ]
+  }
+];
+
+export default function DashboardPage() {
+  return <BillingMetrics metrics={metrics} period="month" />;
+}
+```
+
+### Plan Comparison
+
+```typescript
+import PlanComparison from '@/app/components/billing/PlanComparison';
+
+const plans = [
+  {
+    id: 'basic',
+    name: 'Basic',
+    price: 29,
+    interval: 'month',
+    description: 'For small teams',
+    features: [
+      { name: 'Feature 1', included: true },
+      { name: 'API Calls', included: '10,000' }
+    ]
+  }
+];
+
+export default function PricingPage() {
+  return (
+    <PlanComparison
+      plans={plans}
+      onSelectPlan={(planId) => console.log('Selected plan:', planId)}
+    />
+  );
+}
+```
+
+## Testing
+
+Run the test suite:
+```bash
+npm test
+```
+
+Key test files:
+- `__tests__/billing/rule-builder.test.tsx`
+- `__tests__/billing/billing-metrics.test.tsx`
+
+## Webhook Endpoints
+
+### Stripe Webhooks
+- Endpoint: `/api/webhooks/stripe`
+- Events: payment success/failure, subscription updates
+
+### BitPay Webhooks
+- Endpoint: `/api/webhooks/bitpay`
+- Events: payment completion, confirmation, expiration
+
+### Wyre Webhooks
+- Endpoint: `/api/webhooks/wyre`
+- Events: order status updates, transfer completion
+
+## Security
+
+1. **Webhook Verification**
+   - All webhooks verify signatures
+   - Rate limiting implemented
+   - IP filtering recommended
+
+2. **Payment Processing**
+   - PCI compliance maintained
+   - Sensitive data never logged
+   - All transactions recorded
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Submit a pull request
+
+## License
+
+MIT License 

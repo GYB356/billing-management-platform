@@ -5,6 +5,8 @@ import { billingSecurity } from './middleware/billing-security';
 import { apiAuthMiddleware } from './middleware/apiAuth';
 import { createAuditLogMiddleware } from './lib/logging/audit';
 import { getToken } from 'next-auth/jwt';
+import { withRetry } from './lib/auth-utils';
+import { isRateLimited } from './lib/rate-limiter';
 
 const auditLogMiddleware = createAuditLogMiddleware();
 
@@ -58,162 +60,117 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, errorMessa
 }
 
 export async function middleware(request: NextRequest) {
-  // Get the pathname of the request
   const pathname = request.nextUrl.pathname;
   
-  // Skip processing for static files
-  if (pathname.includes('.') && 
-      !pathname.startsWith('/api')) {
-    return NextResponse.next();
-  }
-  
-  // API routes handling
-  if (pathname.startsWith('/api')) {
-    // Skip audit logging for health checks
-    if (pathname.startsWith('/api/health')) {
-      return NextResponse.next();
-    }
-    
-    try {
-      // Apply API authentication middleware with timeout
-      const apiAuthResponse = await withTimeout(
-        apiAuthMiddleware(request),
-        5000, // 5 second timeout
-        'API authentication timed out'
-      );
-      
-      if (apiAuthResponse.status !== 200) {
-        return apiAuthResponse;
-      }
-      
-      // Apply PCI compliance checks with timeout
-      const pciResponse = await withTimeout(
-        pciComplianceMiddleware(request),
-        3000, // 3 second timeout
-        'PCI compliance check timed out'
-      );
-      
-      if (pciResponse.status !== 200) {
-        return pciResponse;
-      }
-      
-      const response = NextResponse.next();
-      
-      // Add audit logging with timeout
-      try {
-        await withTimeout(
-          auditLogMiddleware(request, response, () => {}),
-          3000, // 3 second timeout
-          'Audit logging timed out'
-        );
-      } catch (auditError) {
-        // Log but continue if audit logging fails
-        console.error('Audit logging error:', auditError);
-      }
-      
-      // Apply billing security middleware with timeout
-      try {
-        const billingSecurityResult = await withTimeout(
-          billingSecurity(request, response),
-          3000, // 3 second timeout
-          'Billing security check timed out'
-        );
-        
-        if (billingSecurityResult.status !== 200) {
-          return billingSecurityResult;
-        }
-        
-        // Apply security headers
-        applySecurityHeaders(response);
-        
-        return response;
-      } catch (error) {
-        console.error('API middleware error:', error);
-        if (error.message && error.message.includes('timed out')) {
-          return new NextResponse(
-            JSON.stringify({ error: error.message }),
-            { status: 504, headers: { 'Content-Type': 'application/json' } }
-          );
-        }
-        return new NextResponse(
-          JSON.stringify({ error: 'Internal Server Error' }),
-          { status: 500, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
-    } catch (error) {
-      console.error('API middleware error:', error);
-      if (error.message && error.message.includes('timed out')) {
-        return new NextResponse(
-          JSON.stringify({ error: error.message }),
-          { status: 504, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
+  // Check rate limiting for authentication endpoints
+  if (pathname.startsWith('/auth/')) {
+    if (isRateLimited(request)) {
       return new NextResponse(
-        JSON.stringify({ error: 'Internal Server Error' }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
+        JSON.stringify({
+          error: 'Too many requests',
+          message: 'Please try again later'
+        }),
+        { status: 429, headers: { 'Content-Type': 'application/json' } }
       );
     }
   }
-  
-  // Web routes handling
+
   try {
-    // Check if the path is public or requires auth
-    const isPublic = isPublicPath(pathname);
-    const requiresAuth = isAuthPath(pathname);
-    
-    try {
-      // Get the user's session token with timeout
-      const token = await withTimeout(
+    // Get the user's session token with retry logic and monitoring
+    const token = await withRetry(
+      async () => await withTimeout(
         getToken({
           req: request,
           secret: process.env.NEXTAUTH_SECRET,
         }),
-        3000, // 3 second timeout
+        10000,
         'Session token verification timed out'
-      );
-      
-      // User is logged in and trying to access a public auth page (login/register)
-      if (isPublic && token && pathname.startsWith('/auth/')) {
-        return NextResponse.redirect(new URL('/dashboard', request.url));
-      }
-      
-      // User is not logged in and trying to access a protected path
-      if (requiresAuth && !token) {
-        const redirectUrl = new URL('/auth/login', request.url);
-        redirectUrl.searchParams.set('callbackUrl', pathname);
-        return NextResponse.redirect(redirectUrl);
-      }
-      
-      // Session validation timeouts - redirect to login if token is invalid
-      if (requiresAuth && token && (token.exp as number) < Math.floor(Date.now() / 1000)) {
-        const redirectUrl = new URL('/auth/login', request.url);
-        redirectUrl.searchParams.set('callbackUrl', pathname);
-        redirectUrl.searchParams.set('error', 'SessionExpired');
-        return NextResponse.redirect(redirectUrl);
-      }
-      
-      // Pass through for all other cases
-      const response = NextResponse.next();
-      applySecurityHeaders(response);
-      return response;
-    } catch (error) {
-      console.error('Session verification error:', error);
-      if (error.message && error.message.includes('timed out') && requiresAuth) {
-        // If session verification times out on an auth path, redirect to login
-        const redirectUrl = new URL('/auth/login', request.url);
-        redirectUrl.searchParams.set('callbackUrl', pathname);
-        redirectUrl.searchParams.set('error', 'VerificationTimeout');
-        return NextResponse.redirect(redirectUrl);
-      }
-      
-      // For public paths or other errors, just continue
-      const response = NextResponse.next();
-      applySecurityHeaders(response);
-      return response;
+      ),
+      3, // max 3 attempts
+      1000, // 1 second initial delay between retries
+      'token-verification'
+    );
+
+    // Enhanced token expiration check with grace period
+    const currentTime = Math.floor(Date.now() / 1000);
+    const gracePeriod = 30; // 30 seconds grace period for clock sync issues
+
+    // Add detailed context for debugging
+    const authContext = {
+      path: pathname,
+      hasToken: !!token,
+      tokenExp: token?.exp,
+      currentTime,
+      isPublic: isPublic(pathname),
+      requiresAuth: requiresAuth(pathname)
+    };
+
+    console.debug('Auth context:', authContext);
+
+    if (isPublic(pathname) && token && pathname.startsWith('/auth/')) {
+      console.info(`Redirecting authenticated user from ${pathname} to dashboard`, authContext);
+      return NextResponse.redirect(new URL('/dashboard', request.url));
     }
+
+    if (requiresAuth(pathname) && !token) {
+      console.warn('Auth required but no token found', {
+        path: pathname,
+        ip: request.ip,
+        timestamp: new Date().toISOString()
+      });
+      const redirectUrl = new URL('/auth/login', request.url);
+      redirectUrl.searchParams.set('callbackUrl', pathname);
+      return NextResponse.redirect(redirectUrl);
+    }
+
+    if (requiresAuth(pathname) && token && ((token.exp as number) - gracePeriod) < currentTime) {
+      console.warn('Session expired', {
+        ...authContext,
+        tokenAge: currentTime - (token.iat as number),
+        gracePeriodRemaining: (token.exp as number) - currentTime
+      });
+      const redirectUrl = new URL('/auth/login', request.url);
+      redirectUrl.searchParams.set('callbackUrl', pathname);
+      redirectUrl.searchParams.set('error', 'SessionExpired');
+      return NextResponse.redirect(redirectUrl);
+    }
+
+    return NextResponse.next();
   } catch (error) {
-    console.error('Middleware error:', error);
-    return new NextResponse('Internal Server Error', { status: 500 });
+    console.error('Authentication error:', {
+      path: pathname,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined
+    });
+
+    // Handle different types of errors appropriately
+    if (error instanceof Error && error.message.includes('timed out')) {
+      return new NextResponse(
+        JSON.stringify({
+          error: 'Authentication timeout',
+          message: 'Please try again'
+        }),
+        {
+          status: 503,
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+    }
+
+    return new NextResponse(
+      JSON.stringify({
+        error: 'Authentication error',
+        message: 'An unexpected error occurred'
+      }),
+      {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      }
+    );
   }
 }
 
@@ -257,9 +214,7 @@ function applySecurityHeaders(response: NextResponse) {
 
 // Configure matcher for middleware
 export const config = {
-  matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml).*)'
-  ],
+  matcher: ['/((?!api|_next/static|_next/image|favicon.ico).*)']
 };
 
 // Helper functions to check path types
@@ -280,3 +235,12 @@ function isAuthPath(pathname: string): boolean {
     return pathname.startsWith(path);
   });
 }
+
+// Helper functions
+const isPublic = (path: string): boolean => {
+  return path.startsWith('/auth/') || path === '/';
+};
+
+const requiresAuth = (path: string): boolean => {
+  return !isPublic(path);
+};

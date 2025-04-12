@@ -1,6 +1,9 @@
 import express from 'express';
 import { billingAssistant } from '../services/ai/billingAssistant';
 import { isAuthenticated } from '../middleware/auth';
+import { validate } from '../middleware/validate';
+import { billingQuestionSchema } from '../validation/schemas';
+import logger from '../lib/logger';
 
 const router = express.Router();
 
@@ -30,34 +33,39 @@ const router = express.Router();
  *     responses:
  *       200:
  *         description: AI-generated response to the billing question
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 answer:
- *                   type: string
  *       400:
- *         description: Missing or invalid question
+ *         description: Invalid request body
  *       401:
- *         description: Unauthorized - Invalid or missing token
+ *         description: Unauthorized
  *       500:
- *         description: Server error while processing the request
+ *         description: Server error
  */
-router.post('/ask', isAuthenticated, async (req, res) => {
-  try {
-    const { question } = req.body;
-    
-    if (!question) {
-      return res.status(400).json({ error: 'Question is required' });
-    }
+router.post(
+  '/ask',
+  isAuthenticated,
+  validate(billingQuestionSchema),
+  async (req, res, next) => {
+    try {
+      logger.info('Processing billing question', {
+        userId: req.user?.id,
+        question: req.body.question
+      });
 
-    const response = await billingAssistant.handleBillingQuery(question);
-    res.json({ answer: response });
-  } catch (error) {
-    console.error('Error in billing assistant:', error);
-    res.status(500).json({ error: 'Failed to process billing query' });
+      const response = await billingAssistant.handleBillingQuery(req.body.question);
+      
+      logger.info('Billing question processed successfully', {
+        userId: req.user?.id
+      });
+
+      res.json({ answer: response });
+    } catch (error) {
+      logger.error('Error processing billing question', {
+        userId: req.user?.id,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+      next(error);
+    }
   }
-});
+);
 
 export default router; 

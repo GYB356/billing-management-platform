@@ -1,7 +1,8 @@
-import prisma from '@/lib/prisma';
+import { prisma } from './prisma';
 import { getServerSession } from 'next-auth';
 import { authOptions } from './auth';
 import { headers } from 'next/headers';
+import { Prisma } from '@prisma/client';
 
 // Enum for event types
 export enum EventType {
@@ -20,6 +21,18 @@ export enum EventType {
   TAX_ID_VALIDATION = 'TAX_ID_VALIDATION',
   TAX_CALCULATION = 'TAX_CALCULATION',
   TAX_REPORT_GENERATED = 'TAX_REPORT_GENERATED',
+  // Subscription events
+  SUBSCRIPTION_CREATED = 'SUBSCRIPTION_CREATED',
+  SUBSCRIPTION_UPDATED = 'SUBSCRIPTION_UPDATED',
+  SUBSCRIPTION_CANCELLED = 'SUBSCRIPTION_CANCELLED',
+  SUBSCRIPTION_RENEWED = 'SUBSCRIPTION_RENEWED',
+  // Payment events
+  PAYMENT_SUCCEEDED = 'PAYMENT_SUCCEEDED',
+  PAYMENT_FAILED = 'PAYMENT_FAILED',
+  PAYMENT_REFUNDED = 'PAYMENT_REFUNDED',
+  // Usage events
+  USAGE_THRESHOLD_REACHED = 'USAGE_THRESHOLD_REACHED',
+  USAGE_LIMIT_EXCEEDED = 'USAGE_LIMIT_EXCEEDED'
 }
 
 // Enum for event severity levels
@@ -41,69 +54,128 @@ export interface CreateEventParams {
   userId?: string;
 }
 
-/**
- * Creates a new event in the system
- */
-export async function createEvent(params: CreateEventParams) {
-  try {
-    // Destructure params
-    const {
-      organizationId,
-      userId,
-      eventType,
-      resourceType,
-      resourceId,
-      metadata = {},
-      severity = EventSeverity.INFO
-    } = params;
+// Custom error class for event-related errors
+export class EventError extends Error {
+  constructor(
+    message: string,
+    public code: string,
+    public metadata?: Record<string, any>
+  ) {
+    super(message);
+    this.name = 'EventError';
+  }
+}
 
-    // If no user ID is provided, try to get it from the session
-    let userIdToUse = userId;
-    
-    if (!userIdToUse) {
-      try {
-        const session = await getServerSession(authOptions);
-        if (session?.user?.id) {
-          userIdToUse = session.user.id;
-        }
-      } catch (error) {
-        // Continue without user ID if session cannot be retrieved
-        console.log('Could not get user from session:', error);
-      }
+interface EventData {
+  organizationId: string;
+  eventType: string;
+  resourceType: string;
+  resourceId: string;
+  severity: 'INFO' | 'WARNING' | 'ERROR';
+  metadata?: Record<string, any>;
+}
+
+/**
+ * Creates a new event in the system with comprehensive error handling
+ */
+export async function createEvent(data: EventData) {
+  try {
+    const { organizationId, eventType, resourceType, resourceId, severity, metadata } = data;
+
+    // Validate organization exists
+    const organization = await prisma.organization.findUnique({
+      where: { id: organizationId },
+    });
+
+    if (!organization) {
+      throw new EventError('Organization not found', 'ORGANIZATION_NOT_FOUND', { organizationId });
     }
 
-    // Create the event
-    const event = await prisma.event.create({
+    // Create notification with proper type casting
+    const notification = await prisma.notification.create({
       data: {
-        eventType,
-        resourceType,
-        resourceId,
         organizationId,
-        userId: userIdToUse,
-        metadata,
-        severity,
+        type: severity === 'ERROR' ? 'ERROR' : severity === 'WARNING' ? 'WARNING' : 'INFO',
+        title: `${resourceType} ${eventType}`,
+        message: `Event ${eventType} occurred for ${resourceType} ${resourceId}`,
+        data: metadata || {},
+        channels: ['IN_APP'] as const,
       },
     });
 
-    // Process event for webhooks (using dynamic import to avoid circular dependencies)
-    if (organizationId) {
-      try {
-        // Dynamically import the webhook service to avoid circular dependencies
-        const { processEventForWebhooks } = await import('./services/event-webhook-service');
-        
-        // Process the event asynchronously
-        processEventForWebhooks(event.id).catch(error => {
-          console.error('Error processing webhook for event:', error);
-        });
-      } catch (error) {
-        console.error('Error importing webhook service:', error);
-      }
+    // Process webhooks for critical events
+    if (severity === 'ERROR' || severity === 'WARNING') {
+      const webhooks = await prisma.webhook.findMany({
+        where: {
+          organizationId,
+          events: {
+            has: eventType,
+          },
+          status: 'ACTIVE',
+        },
+      });
+
+      // Create webhook deliveries with proper error handling
+      await Promise.all(webhooks.map(async (webhook) => {
+        try {
+          await prisma.webhookDelivery.create({
+            data: {
+              webhook: { connect: { id: webhook.id } },
+              payload: {
+                event: eventType,
+                resourceType,
+                resourceId,
+                severity,
+                metadata,
+                timestamp: new Date().toISOString(),
+              },
+              status: 'PENDING',
+            },
+          });
+        } catch (error) {
+          console.error('Failed to create webhook delivery:', error);
+          // Log the failed webhook delivery
+          await prisma.metricData.create({
+            data: {
+              type: 'webhook.delivery.failed',
+              value: 1,
+              metadata: {
+                webhookId: webhook.id,
+                error: error instanceof Error ? error.message : 'Unknown error',
+              },
+            },
+          });
+        }
+      }));
     }
 
-    return event;
+    // Log metric with error handling
+    await prisma.metricData.create({
+      data: {
+        type: `event.${eventType}`,
+        value: 1,
+        metadata: {
+          resourceType,
+          resourceId,
+          severity,
+        },
+      },
+    });
+
+    return notification;
   } catch (error) {
-    console.error('Error creating event:', error);
-    throw error;
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      throw new EventError(
+        'Database error while creating event',
+        `DB_ERROR_${error.code}`,
+        { originalError: error }
+      );
+    }
+    throw new EventError(
+      'Unexpected error while creating event',
+      'INTERNAL_SERVER_ERROR',
+      { originalError: error }
+    );
   }
 }
 

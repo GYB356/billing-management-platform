@@ -54,7 +54,7 @@ export class TaxService {
         }
       });
 
-      return {
+    return {
         taxAmount: tax.tax.amount_to_collect,
         details: tax
       };
@@ -78,9 +78,9 @@ export class TaxService {
       // For US, validate EIN format
       if (country === 'US') {
         return /^\d{2}-\d{7}$/.test(taxId);
-      }
-
-      return true;
+    }
+    
+    return true;
     } catch (error) {
       console.error('Tax ID validation error:', error);
       throw new Error('Failed to validate tax ID');
@@ -93,7 +93,7 @@ export class TaxService {
       const endDate = new Date(month.getFullYear(), month.getMonth() + 1, 0);
 
       const taxCalculations = await prisma.taxCalculation.findMany({
-        where: {
+      where: {
           customer: {
             organizationId
           },

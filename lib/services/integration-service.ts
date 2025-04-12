@@ -5,9 +5,12 @@
 import { prisma } from '@/lib/prisma';
 import { createEvent } from '@/lib/events';
 import { NotificationService } from './notification-service';
+<<<<<<< HEAD
 import { createHmac } from 'crypto';
 import { Queue } from 'bull';
 import { redis } from '../redis';
+=======
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
 
 interface OAuthConfig {
   clientId: string;
@@ -28,6 +31,7 @@ interface OAuthToken {
 
 type IntegrationType = 'quickbooks' | 'xero' | 'netsuite' | 'salesforce' | 'hubspot';
 
+<<<<<<< HEAD
 interface WebhookPayload {
   event: string;
   data: any;
@@ -53,6 +57,11 @@ export class IntegrationService {
       port: parseInt(process.env.REDIS_PORT || '6379'),
     },
   });
+=======
+export class IntegrationService {
+  private readonly notificationService: NotificationService;
+  private readonly integrationConfigs: Record<IntegrationType, OAuthConfig>;
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
 
   constructor() {
     this.notificationService = new NotificationService();
@@ -342,6 +351,7 @@ export class IntegrationService {
       }
     });
   }
+<<<<<<< HEAD
 
   static async registerWebhook(organizationId: string, config: WebhookConfig) {
     try {
@@ -541,4 +551,6 @@ export class IntegrationService {
 
     return lastSuccessTime > lastFailureTime ? 'HEALTHY' : 'FAILING';
   }
+=======
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
 }

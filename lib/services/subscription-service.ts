@@ -1,3 +1,7 @@
+<<<<<<< HEAD
+=======
+
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
 import { stripe } from '@/lib/stripe';
 import { prisma } from '@/lib/prisma';
 import { 
@@ -11,7 +15,10 @@ import { sendSubscriptionEmail } from '@/lib/email';
 import { InvoiceService } from './invoice-service';
 import { UsageService } from './usage-service';
 import Stripe from 'stripe';
+<<<<<<< HEAD
 import { addDays, addMonths, differenceInDays } from 'date-fns';
+=======
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
 
 export interface SubscriptionParams {
   customerId: string;
@@ -40,6 +47,7 @@ export interface SubscriptionWithDetails extends Subscription {
   planFeatures?: PlanFeature[];
 }
 
+<<<<<<< HEAD
 export interface PlanComparison {
   plans: Array<{
     id: string;
@@ -66,6 +74,8 @@ export interface PlanComparison {
   }>;
 }
 
+=======
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
 export class SubscriptionService {
   private readonly invoiceService: InvoiceService;
   private readonly usageService: UsageService;
@@ -776,6 +786,7 @@ export class SubscriptionService {
       });
     }
   }
+<<<<<<< HEAD
 
   /**
    * Compare multiple subscription plans
@@ -1096,4 +1107,6 @@ export class SubscriptionService {
         throw new Error('Invalid subscription action');
     }
   }
+=======
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
 }

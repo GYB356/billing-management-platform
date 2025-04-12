@@ -11,7 +11,11 @@ interface Generate2FAResponse {
 export async function generateTOTPSecret(userId: string): Promise<Generate2FAResponse> {
   const secret = authenticator.generateSecret();
   const user = await prisma.user.findUnique({ where: { id: userId } });
+<<<<<<< HEAD
 
+=======
+  
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
   if (!user) {
     throw new Error('User not found');
   }
@@ -99,17 +103,29 @@ export async function verifyBackupCode(userId: string, code: string): Promise<bo
     return false;
   }
 
+<<<<<<< HEAD
       // Remove the used backup code
       await prisma.user.update({
         where: { id: userId },
         data: {
+=======
+  // Remove the used backup code
+  await prisma.user.update({
+    where: { id: userId },
+    data: {
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
       backupCodes: user.backupCodes.filter(c => c !== code),
       last2FAVerified: new Date()
     }
   });
 
+<<<<<<< HEAD
       return true;
     }
+=======
+  return true;
+}
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
 
 export async function generateEmailToken(userId: string): Promise<string> {
   const token = randomBytes(32).toString('hex');
@@ -154,8 +170,13 @@ export async function verifyEmailToken(userId: string, token: string): Promise<b
   });
 
   if (!storedToken) {
+<<<<<<< HEAD
   return false;
 }
+=======
+    return false;
+  }
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
 
   // Delete the used token
   await prisma.verificationToken.delete({

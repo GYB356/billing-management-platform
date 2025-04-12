@@ -4,7 +4,10 @@ import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { stripe } from '@/lib/stripe';
 import { z } from 'zod';
+<<<<<<< HEAD
 import { SubscriptionService } from '@/lib/services/subscription-service';
+=======
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
 
 // Validation schemas
 const createSubscriptionSchema = z.object({
@@ -21,6 +24,7 @@ const updateSubscriptionSchema = z.object({
   cancelAtPeriodEnd: z.boolean().optional(),
 });
 
+<<<<<<< HEAD
 const compareSchema = z.object({
   planIds: z.array(z.string()),
 });
@@ -43,6 +47,8 @@ const updateStatusSchema = z.object({
   action: z.enum(['activate', 'cancel', 'pause', 'resume']),
 });
 
+=======
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
 export async function POST(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
@@ -200,6 +206,7 @@ export async function PUT(req: NextRequest) {
   }
 }
 
+<<<<<<< HEAD
 export async function GET(request: Request) {
   try {
     const session = await getServerSession(authOptions);
@@ -276,5 +283,74 @@ export async function POST(request: Request) {
       return NextResponse.json({ errors: error.errors }, { status: 400 });
     }
     return new NextResponse('Internal Server Error', { status: 500 });
+=======
+export async function GET(req: NextRequest) {
+  try {
+    const session = await getServerSession(authOptions);
+    if (!session?.user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const { searchParams } = new URL(req.url);
+    const organizationId = searchParams.get('organizationId');
+
+    if (!organizationId) {
+      return NextResponse.json(
+        { error: 'Organization ID is required' },
+        { status: 400 }
+      );
+    }
+
+    const subscriptions = await prisma.subscription.findMany({
+      where: { organizationId },
+      include: {
+        plan: true,
+        organization: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    return NextResponse.json(subscriptions);
+  } catch (error) {
+    console.error('Error fetching subscriptions:', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch subscriptions' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PUT(request: Request) {
+  try {
+    const session = await getServerSession(authOptions);
+    if (!session?.user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const { organizationId, subscriptionId, updates } = await request.json();
+
+    if (!organizationId || !subscriptionId || !updates) {
+      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+    }
+
+    const result = await subscriptionService.updateSubscription({
+      organizationId,
+      subscriptionId,
+      updates,
+    });
+
+    if (!result.success) {
+      return NextResponse.json({ error: result.error }, { status: 400 });
+    }
+
+    return NextResponse.json({ success: true, subscription: result.subscription });
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message || 'Failed to update subscription' }, { status: 500 });
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
   }
 }

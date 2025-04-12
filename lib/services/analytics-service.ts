@@ -51,6 +51,7 @@ interface AdvancedAnalyticsMetrics {
   };
 }
 
+<<<<<<< HEAD
 interface AnalyticsMetrics {
   mrr: number;
   churnRate: number;
@@ -58,6 +59,8 @@ interface AnalyticsMetrics {
   revenueTimeline: Array<{ month: string; revenue: number }>;
 }
 
+=======
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
 export class AnalyticsService {
   async getAdvancedMetrics(startDate: Date, endDate: Date): Promise<AdvancedAnalyticsMetrics> {
     const [
@@ -386,6 +389,7 @@ export class AnalyticsService {
   /**
    * Calculate Monthly Recurring Revenue (MRR)
    */
+<<<<<<< HEAD
   async calculateMRR(date = new Date()): Promise<number> {
     const activeSubscriptions = await prisma.subscription.findMany({
       where: {
@@ -473,5 +477,48 @@ export class AnalyticsService {
     }
 
     return timeline;
+=======
+  private async calculateMRR(date: Date): Promise<number> {
+    const activeSubscriptions = await prisma.subscription.findMany({
+      where: {
+        status: 'ACTIVE',
+        currentPeriodEnd: {
+          gt: date
+        }
+      },
+      include: {
+        plan: true
+      }
+    });
+
+    return activeSubscriptions.reduce((sum, subscription) => {
+      const monthlyPrice = this.normalizeToMonthlyPrice(
+        subscription.plan.price,
+        subscription.plan.interval
+      );
+      return sum + (monthlyPrice * (subscription.quantity || 1));
+    }, 0);
+  }
+
+  /**
+   * Normalize price to monthly basis
+   */
+  private normalizeToMonthlyPrice(price: number, interval: string): number {
+    switch (interval.toLowerCase()) {
+      case 'year':
+      case 'yearly':
+        return price / 12;
+      case 'quarter':
+      case 'quarterly':
+        return price / 3;
+      case 'week':
+      case 'weekly':
+        return price * 4;
+      case 'month':
+      case 'monthly':
+      default:
+        return price;
+    }
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
   }
 }

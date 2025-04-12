@@ -18,7 +18,10 @@ model User {
   password    String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+<<<<<<< HEAD
   notifications Notification[]
+=======
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
   // ...existing fields...
 }
 
@@ -30,6 +33,7 @@ model Organization {
   stripeCustomerId String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+<<<<<<< HEAD
   notifications   Notification[]
   // ...relationships...
 }
@@ -79,6 +83,24 @@ model Subscription {
   updatedAt         DateTime  @updatedAt
 
   @@index([customerId])
+=======
+  // ...relationships...
+}
+
+model Subscription {
+  id                 String   @id @default(cuid())
+  organizationId     String
+  planId             String
+  status             String
+  stripeSubscriptionId String?
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  cancelAtPeriodEnd  Boolean  @default(false)
+  trialEndsAt        DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  // ...relationships...
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
 }
 
 model Plan {
@@ -90,6 +112,7 @@ model Plan {
   interval     String   @default("month")
   stripePriceId String?
   isActive     Boolean  @default(true)
+<<<<<<< HEAD
   features     PlanFeature[]
   usageLimits  UsageLimit[]
   sortOrder    Int      @default(0)
@@ -127,6 +150,11 @@ model UsageLimit {
 
   @@index([planId])
   @@index([featureKey])
+=======
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  // ...relationships...
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
 }
 
 model Invoice {
@@ -145,6 +173,7 @@ model Invoice {
 model UsageRecord {
   id             String   @id @default(cuid())
   subscriptionId String
+<<<<<<< HEAD
   subscription   Subscription @relation(fields: [subscriptionId], references: [id])
   featureKey     String
   quantity       Float
@@ -157,6 +186,12 @@ model UsageRecord {
   @@index([subscriptionId])
   @@index([featureKey])
   @@index([billingPeriodStart, billingPeriodEnd])
+=======
+  featureId      String
+  quantity       Float
+  timestamp      DateTime @default(now())
+  // ...relationships...
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
 }
 
 model Report {
@@ -194,6 +229,7 @@ model EmailNotification {
 model Webhook {
   id            String   @id @default(cuid())
   organizationId String
+<<<<<<< HEAD
   organization  Organization @relation(fields: [organizationId], references: [id])
   url           String
   secret        String
@@ -207,12 +243,23 @@ model Webhook {
   deliveries    WebhookDelivery[]
 
   @@index([organizationId])
+=======
+  url           String
+  events        String[]
+  secret        String
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
 }
 
 model WebhookDelivery {
   id         String   @id @default(cuid())
   webhookId  String
+<<<<<<< HEAD
   webhook    Webhook  @relation(fields: [webhookId], references: [id])
+=======
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
   payload    Json
   status     String
   statusCode Int?
@@ -220,6 +267,7 @@ model WebhookDelivery {
   error      String?
   retries    Int      @default(0)
   createdAt  DateTime @default(now())
+<<<<<<< HEAD
 
   @@index([webhookId])
 }
@@ -327,6 +375,8 @@ model ApiKey {
   updatedAt     DateTime  @updatedAt
 
   @@index([organizationId])
+=======
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
 }
 
 // Additional models can be added here

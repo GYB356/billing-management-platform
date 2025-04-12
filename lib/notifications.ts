@@ -175,6 +175,7 @@ export async function sendUsageThresholdNotification(
     data: { usageType, currentUsage, threshold, limit, percentUsed },
     channels: [NotificationChannel.IN_APP, NotificationChannel.EMAIL],
   });
+<<<<<<< HEAD
 }
 
 interface NotificationPayload {
@@ -255,4 +256,6 @@ export async function getUserNotifications(userId: string, options: {
   ]);
 
   return { notifications, total };
+=======
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
 }

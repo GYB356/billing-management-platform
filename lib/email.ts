@@ -1,7 +1,12 @@
 import { Resend } from 'resend';
+<<<<<<< HEAD
 import { prisma } from './prisma';
 import crypto from 'crypto';
 import sgMail from '@sendgrid/mail';
+=======
+import { prisma } from './db';
+import crypto from 'crypto';
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
 
 if (!process.env.RESEND_API_KEY) {
   console.warn('RESEND_API_KEY is not set, emails will not be sent');
@@ -14,6 +19,7 @@ const resend = process.env.RESEND_API_KEY
 const DEFAULT_FROM_EMAIL = process.env.DEFAULT_FROM_EMAIL || 'Billing Platform <noreply@yourdomain.com>';
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 
+<<<<<<< HEAD
 // Initialize SendGrid with API key
 if (process.env.SENDGRID_API_KEY) {
   sgMail.setApiKey(process.env.SENDGRID_API_KEY);
@@ -24,12 +30,28 @@ interface EmailOptions {
   subject: string;
   text: string;
   html?: string;
+=======
+interface EmailOptions {
+  to: string;
+  subject: string;
+  html: string;
+  from?: string;
+  replyTo?: string;
+  cc?: string[];
+  bcc?: string[];
+  attachments?: Array<{
+    filename: string;
+    content: Buffer;
+    contentType?: string;
+  }>;
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
 }
 
 /**
  * Send an email using Resend
  */
 export async function sendEmail(options: EmailOptions): Promise<boolean> {
+<<<<<<< HEAD
   if (!process.env.SENDGRID_API_KEY) {
     console.warn('SendGrid API key not configured. Email not sent.');
     return process.env.NODE_ENV === 'development';
@@ -48,6 +70,30 @@ export async function sendEmail(options: EmailOptions): Promise<boolean> {
     return true;
   } catch (error) {
     console.error('Error sending email:', error);
+=======
+  const { to, subject, html, from = DEFAULT_FROM_EMAIL, replyTo, cc, bcc, attachments } = options;
+  
+  try {
+    if (!resend) {
+      console.log('Email would have been sent:', { to, subject });
+      return process.env.NODE_ENV === 'development';
+    }
+
+    await resend.emails.send({
+      from,
+      to,
+      subject,
+      html,
+      reply_to: replyTo,
+      cc,
+      bcc,
+      attachments,
+    });
+    
+    return true;
+  } catch (error) {
+    console.error('Failed to send email:', error);
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
     return false;
   }
 }
@@ -73,7 +119,11 @@ export async function sendVerificationEmail(email: string): Promise<boolean> {
     return await sendEmail({
       to: email,
       subject: 'Verify your email address',
+<<<<<<< HEAD
       text: `
+=======
+      html: `
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
         <h1>Verify your email address</h1>
         <p>Click the link below to verify your email address:</p>
         <a href="${verificationUrl}">${verificationUrl}</a>
@@ -105,7 +155,11 @@ export async function sendSubscriptionConfirmationEmail(
   return await sendEmail({
     to: email,
     subject: 'Subscription Confirmed',
+<<<<<<< HEAD
     text: `
+=======
+    html: `
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
       <h1>Subscription Confirmed</h1>
       <p>Thank you for subscribing to our platform!</p>
       <h2>Subscription Details:</h2>
@@ -132,7 +186,11 @@ export async function sendSubscriptionUpdateEmail(
   return await sendEmail({
     to: email,
     subject: 'Subscription Updated',
+<<<<<<< HEAD
     text: `
+=======
+    html: `
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
       <h1>Subscription Updated</h1>
       <p>Your subscription has been updated successfully.</p>
       <h2>Changes:</h2>
@@ -157,7 +215,11 @@ export async function sendSubscriptionCancellationEmail(
   return await sendEmail({
     to: email,
     subject: 'Subscription Cancelled',
+<<<<<<< HEAD
     text: `
+=======
+    html: `
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
       <h1>Subscription Cancelled</h1>
       <p>Your subscription has been cancelled successfully.</p>
       <h2>Details:</h2>
@@ -180,7 +242,10 @@ interface PaymentFailedEmailData {
   retryDate?: Date;
   invoiceId?: string;
   paymentMethod?: string;
+<<<<<<< HEAD
   error?: string;
+=======
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
 }
 
 /**
@@ -190,7 +255,11 @@ export async function sendPaymentFailedEmail(
   email: string,
   data: PaymentFailedEmailData
 ): Promise<boolean> {
+<<<<<<< HEAD
   const { amount, currency = 'USD', dueDate, retryDate, invoiceId, paymentMethod, error } = data;
+=======
+  const { amount, currency = 'USD', dueDate, retryDate, invoiceId, paymentMethod } = data;
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
   
   const formattedAmount = new Intl.NumberFormat('en-US', {
     style: 'currency',
@@ -200,14 +269,21 @@ export async function sendPaymentFailedEmail(
   return await sendEmail({
     to: email,
     subject: 'Payment Failed',
+<<<<<<< HEAD
     text: `
+=======
+    html: `
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
       <h1>Payment Failed</h1>
       <p>We were unable to process your payment of ${formattedAmount}.</p>
       <p>Due Date: ${dueDate.toLocaleDateString()}</p>
       ${retryDate ? `<p>Next Retry: ${retryDate.toLocaleDateString()}</p>` : ''}
       ${invoiceId ? `<p>Invoice ID: ${invoiceId}</p>` : ''}
       ${paymentMethod ? `<p>Payment Method: ${paymentMethod}</p>` : ''}
+<<<<<<< HEAD
       ${error ? `<p>Error: ${error}</p>` : ''}
+=======
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
       <p>Please update your payment method in your account settings to avoid service interruption.</p>
     `,
   });
@@ -231,7 +307,11 @@ export async function sendPaymentSucceededEmail(
   return await sendEmail({
     to: email,
     subject: 'Payment Successful',
+<<<<<<< HEAD
     text: `
+=======
+    html: `
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
       <h1>Payment Successful</h1>
       <p>Your payment of ${formattedAmount} has been processed successfully.</p>
       <p>Date: ${paymentDate.toLocaleDateString()}</p>
@@ -253,7 +333,11 @@ export async function sendPasswordResetEmail(
   return await sendEmail({
     to: email,
     subject: 'Reset Your Password',
+<<<<<<< HEAD
     text: `
+=======
+    html: `
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
       <h1>Reset Your Password</h1>
       <p>Click the link below to reset your password:</p>
       <a href="${resetUrl}">${resetUrl}</a>
@@ -276,7 +360,11 @@ export async function sendSubscriptionPauseEmail(
   return await sendEmail({
     to: email,
     subject: 'Subscription Paused',
+<<<<<<< HEAD
     text: `
+=======
+    html: `
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
       <h1>Subscription Paused</h1>
       <p>Your subscription to the ${planName} plan has been paused.</p>
       <p><strong>Paused at:</strong> ${pausedAt.toLocaleDateString()}</p>
@@ -304,7 +392,11 @@ export async function sendSubscriptionResumeEmail(
   return await sendEmail({
     to: email,
     subject: 'Subscription Resumed',
+<<<<<<< HEAD
     text: `
+=======
+    html: `
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
       <h1>Subscription Resumed</h1>
       <p>Your subscription to the ${planName} plan has been resumed.</p>
       <p><strong>Resumed at:</strong> ${resumedAt.toLocaleDateString()}</p>
@@ -312,6 +404,7 @@ export async function sendSubscriptionResumeEmail(
       <p>If you have any questions, please contact our support team.</p>
     `,
   });
+<<<<<<< HEAD
 }
 
 export async function sendPaymentRetryEmail(to: string, amount: number, currency: string, retryDate: Date): Promise<void> {
@@ -325,4 +418,6 @@ export async function sendPaymentRetryEmail(to: string, amount: number, currency
       <p>Please ensure your payment method has sufficient funds.</p>
     `,
   });
+=======
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
 } 

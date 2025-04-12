@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 import { prisma } from './prisma';
 import { stripe } from './stripe';
 import { CurrencyService } from './currency';
@@ -6,6 +7,12 @@ import { OpenAI } from 'openai';
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
+=======
+<<<<<<< HEAD
+import { prisma } from './prisma';
+import { stripe } from './stripe';
+import { CurrencyService } from './currency';
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
 
 export interface AnalyticsMetrics {
   revenue: {
@@ -285,6 +292,7 @@ export class AnalyticsService {
     };
   }
 } 
+<<<<<<< HEAD
 
 interface AnalyticsInsight {
   type: string;
@@ -515,3 +523,17 @@ export async function optimizePricing(organizationId: string): Promise<Analytics
     return [];
   }
 }
+=======
+=======
+import { prisma } from '@/lib/prisma';
+
+export async function calculateChurnRate() {
+  const totalSubscriptions = await prisma.subscription.count();
+  const canceledSubscriptions = await prisma.subscription.count({
+    where: { status: 'CANCELED' },
+  });
+
+  return (canceledSubscriptions / totalSubscriptions) * 100;
+}
+>>>>>>> 58d4a3da7158e64e5700c51b28776197a8d974c9
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f

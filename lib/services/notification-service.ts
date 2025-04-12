@@ -3,8 +3,11 @@ import { NotificationType, NotificationChannel } from '@prisma/client';
 import { sendEmail } from '../email';
 import { WebPushService } from './web-push-service';
 import { createEvent } from '../events';
+<<<<<<< HEAD
 import { io, Socket } from 'socket.io-client';
 import { EventEmitter } from 'events';
+=======
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
 
 interface NotificationTemplate {
   subject: string;
@@ -24,6 +27,7 @@ interface NotificationParams {
   templateData?: Record<string, any>;
 }
 
+<<<<<<< HEAD
 export type Notification = {
   id: string;
   type: NotificationType;
@@ -37,10 +41,14 @@ export type Notification = {
 class NotificationService extends EventEmitter {
   private socket: Socket | null = null;
   private userId: string | null = null;
+=======
+export class NotificationService {
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
   private readonly webPushService: WebPushService;
   private readonly templateCache: Map<string, NotificationTemplate>;
 
   constructor() {
+<<<<<<< HEAD
     super();
     this.webPushService = new WebPushService();
     this.templateCache = new Map();
@@ -70,6 +78,10 @@ class NotificationService extends EventEmitter {
 
   private handleNotification(notification: Notification) {
     this.emit('notification', notification);
+=======
+    this.webPushService = new WebPushService();
+    this.templateCache = new Map();
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
   }
 
   /**
@@ -443,6 +455,7 @@ class NotificationService extends EventEmitter {
       update: preferences
     });
   }
+<<<<<<< HEAD
 
   async getNotifications(page = 1, limit = 20): Promise<{
     notifications: Notification[];
@@ -520,3 +533,6 @@ class NotificationService extends EventEmitter {
 }
 
 export const notificationService = new NotificationService();
+=======
+}
+>>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f

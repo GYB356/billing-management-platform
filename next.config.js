@@ -51,7 +51,6 @@ const nextConfig = {
 
   experimental: {
     optimizeCss: true,
-    babelConfig: false, // Ensure Babel is not being used
   },
 
   swcMinify: true,

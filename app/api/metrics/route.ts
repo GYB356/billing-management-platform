@@ -203,8 +203,8 @@ export async function POST(req: NextRequest) {
       },
       orderBy: {
         createdAt: 'desc',
-      },
-    });
+    },
+  });
 
     // Format data based on requested format
     let exportData;
@@ -226,11 +226,11 @@ export async function POST(req: NextRequest) {
       ].join('\n');
 
       return new NextResponse(csv, {
-        headers: {
+    headers: {
           'Content-Type': 'text/csv',
           'Content-Disposition': `attachment; filename="webhook-metrics-${startDate.toISOString().split('T')[0]}-to-${endDate.toISOString().split('T')[0]}.csv"`,
-        },
-      });
+    },
+  });
     }
 
     // Default to JSON

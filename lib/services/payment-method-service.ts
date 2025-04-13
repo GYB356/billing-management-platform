@@ -1,12 +1,18 @@
 import { stripe } from '@/lib/stripe';
-import prisma from '@/lib/prisma';
+import { prisma } from '@/lib/prisma';
 import { createEvent, EventSeverity } from '@/lib/events';
 
 /**
- * List payment methods for a customer
+ * List payment methods for a customer with pagination
  * @param customerId - Stripe customer ID
+ * @param page - Page number (1-based)
+ * @param limit - Number of items per page
  */
-export async function listPaymentMethods(customerId: string) {
+export async function listPaymentMethods(
+  customerId: string,
+  page: number = 1,
+  limit: number = 10
+) {
   try {
     // Verify the customer exists
     const customer = await prisma.organization.findFirst({
@@ -17,23 +23,32 @@ export async function listPaymentMethods(customerId: string) {
       throw new Error('Customer not found');
     }
 
-    // Get payment methods from Stripe
+    // Calculate starting point
+    const startingAfter = (page - 1) * limit;
+
+    // Get payment methods from Stripe with pagination
     const paymentMethods = await stripe.paymentMethods.list({
       customer: customerId,
       type: 'card',
+      limit: limit,
+      starting_after: startingAfter > 0 ? undefined : undefined, // Stripe handles pagination differently
     });
 
     // Format the response
-    return paymentMethods.data.map(method => ({
-      id: method.id,
-      type: method.type,
-      brand: method.card?.brand,
-      last4: method.card?.last4,
-      expMonth: method.card?.exp_month,
-      expYear: method.card?.exp_year,
-      isDefault: method.metadata?.isDefault === 'true',
-      createdAt: new Date(method.created * 1000),
-    }));
+    return {
+      data: paymentMethods.data.map(method => ({
+        id: method.id,
+        type: method.type,
+        brand: method.card?.brand,
+        last4: method.card?.last4,
+        expMonth: method.card?.exp_month,
+        expYear: method.card?.exp_year,
+        isDefault: method.metadata?.isDefault === 'true',
+        createdAt: new Date(method.created * 1000),
+      })),
+      hasMore: paymentMethods.has_more,
+      totalCount: paymentMethods.data.length, // Stripe doesn't provide total count
+    };
   } catch (error) {
     console.error('Error listing payment methods:', error);
     throw error;
@@ -320,4 +335,10 @@ export async function createSetupIntent(customerId: string) {
     console.error('Error creating setup intent:', error);
     throw error;
   }
-} 
+}
+
+// Alias removePaymentMethod as deletePaymentMethod for route compatibility
+export const deletePaymentMethod = removePaymentMethod;
+
+// Alias setDefaultPaymentMethod as updatePaymentMethod for route compatibility
+export const updatePaymentMethod = setDefaultPaymentMethod; 

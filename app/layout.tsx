@@ -14,8 +14,8 @@ import { ServiceWorkerRegistration } from '@/components/ServiceWorkerRegistratio
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'SaaS Billing Platform',
-  description: 'A modern SaaS billing and subscription management platform',
+  title: 'Your Platform',
+  description: 'Your platform description',
 };
 
 export default function RootLayout({

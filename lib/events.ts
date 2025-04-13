@@ -131,8 +131,8 @@ export async function createEvent(data: EventData) {
               },
               status: 'PENDING',
             },
-          });
-        } catch (error) {
+        });
+      } catch (error) {
           console.error('Failed to create webhook delivery:', error);
           // Log the failed webhook delivery
           await prisma.metricData.create({

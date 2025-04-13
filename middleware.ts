@@ -11,34 +11,34 @@ import { isRateLimited } from './lib/rate-limiter';
 const auditLogMiddleware = createAuditLogMiddleware();
 
 // Configuration for auth protected paths
-const config = {
-  // Public paths that don't require authentication
-  publicPaths: [
-    '/',
-    '/auth/login',
-    '/auth/register',
-    '/auth/forgot-password',
-    '/auth/reset-password',
-    '/api/auth/',
-    '/api/webhooks/',
-    '/api/public/',
-    '/api/health',
-    '/_next/',
-    '/favicon.ico',
-    '/robots.txt',
-    '/sitemap.xml',
-  ],
-  // Paths that should redirect to login when unauthenticated
-  authPaths: [
-    '/dashboard',
-    '/settings',
-    '/profile',
-    '/payment',
-    '/billing',
-    '/usage',
-    '/account',
-  ],
-};
+const publicPaths = [
+  '/',
+  '/auth/login',
+  '/auth/register',
+  '/auth/forgot-password',
+  '/auth/reset-password',
+  '/api/auth/',
+  '/api/webhooks/',
+  '/api/public/',
+  '/api/health',
+  '/_next/',
+  '/favicon.ico',
+  '/robots.txt',
+  '/sitemap.xml',
+];
+
+const authPaths = [
+  '/dashboard',
+  '/settings',
+  '/profile',
+  '/payment',
+  '/billing',
+  '/usage',
+  '/account',
+  '/invoices',
+  '/analytics',
+  '/customer-portal',
+];
 
 // Helper function to implement timeout for promises
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, errorMessage: string): Promise<T> {
@@ -58,6 +58,10 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, errorMessa
     timeoutPromise
   ]);
 }
+
+// Helper functions for path checking
+const isPublic = (path: string): boolean => publicPaths.some(p => path.startsWith(p));
+const requiresAuth = (path: string): boolean => authPaths.some(p => path.startsWith(p));
 
 export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
@@ -111,7 +115,7 @@ export async function middleware(request: NextRequest) {
       console.info(`Redirecting authenticated user from ${pathname} to dashboard`, authContext);
       return NextResponse.redirect(new URL('/dashboard', request.url));
     }
-
+      
     if (requiresAuth(pathname) && !token) {
       console.warn('Auth required but no token found', {
         path: pathname,
@@ -122,7 +126,7 @@ export async function middleware(request: NextRequest) {
       redirectUrl.searchParams.set('callbackUrl', pathname);
       return NextResponse.redirect(redirectUrl);
     }
-
+      
     if (requiresAuth(pathname) && token && ((token.exp as number) - gracePeriod) < currentTime) {
       console.warn('Session expired', {
         ...authContext,
@@ -135,7 +139,9 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(redirectUrl);
     }
 
-    return NextResponse.next();
+    const response = NextResponse.next();
+    applySecurityHeaders(response);
+    return response;
   } catch (error) {
     console.error('Authentication error:', {
       path: pathname,
@@ -212,35 +218,15 @@ function applySecurityHeaders(response: NextResponse) {
   );
 }
 
-// Configure matcher for middleware
+// Middleware config
 export const config = {
-  matcher: ['/((?!api|_next/static|_next/image|favicon.ico).*)']
-};
-
-// Helper functions to check path types
-function isPublicPath(pathname: string): boolean {
-  return config.publicPaths.some(path => {
-    if (path.endsWith('/')) {
-      return pathname.startsWith(path);
-    }
-    return pathname === path;
-  });
-}
-
-function isAuthPath(pathname: string): boolean {
-  return config.authPaths.some(path => {
-    if (path.endsWith('/')) {
-      return pathname.startsWith(path);
-    }
-    return pathname.startsWith(path);
-  });
-}
-
-// Helper functions
-const isPublic = (path: string): boolean => {
-  return path.startsWith('/auth/') || path === '/';
-};
-
-const requiresAuth = (path: string): boolean => {
-  return !isPublic(path);
+  matcher: [
+    /*
+     * Match all request paths except for the ones starting with:
+     * - _next/static (static files)
+     * - _next/image (image optimization files)
+     * - favicon.ico (favicon file)
+     */
+    '/((?!_next/static|_next/image|favicon.ico).*)',
+  ],
 };

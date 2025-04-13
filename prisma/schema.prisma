@@ -94,21 +94,28 @@ model Subscription {
 }
 
 model Plan {
-  id           String   @id @default(cuid())
-  name         String
-  description  String?
-  price        Float
-  currency     String   @default("USD")
-  interval     String   @default("month")
-  stripePriceId String?
-  isActive     Boolean  @default(true)
-  features     PlanFeature[]
-  usageLimits  UsageLimit[]
-  sortOrder    Int      @default(0)
-  metadata     Json?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  subscriptions Subscription[]
+  id             String   @id @default(cuid())
+  name           String
+  description    String?
+  basePrice      Float    // Base price before dynamic adjustments
+  currentPrice   Float    // Current active price
+  currency       String   @default("USD")
+  interval       String   @default("month")
+  stripePriceId  String?
+  isActive       Boolean  @default(true)
+  features       PlanFeature[]
+  usageLimits    UsageLimit[]
+  sortOrder      Int      @default(0)
+  metadata       Json?
+  priceHistory   PriceHistory[]
+  priceTests     PriceTest[]
+  revenueRules   RevenueRecognitionRule[]
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  subscriptions  Subscription[]
+  marketSegment  String?  // For segment-based pricing
+  costBasis      Float?   // For margin calculations
+  churnRisk      Float?   // Predicted churn probability
 }
 
 model PlanFeature {
@@ -238,216 +245,66 @@ model WebhookDelivery {
 }
 
 model Payment {
-  id            String   @id @default(cuid())
-  orderId       String
-  order         Order    @relation(fields: [orderId], references: [id])
-  customerId    String?
-  customer      Customer? @relation(fields: [customerId], references: [id])
-  subscriptionId String?
-  subscription  Subscription? @relation(fields: [subscriptionId], references: [id])
-  amount        Float
-  currency      String
-  provider      String    // STRIPE, BITPAY, WYRE, etc.
-  status        String    // PENDING, PROCESSING, COMPLETED, FAILED
-  externalId    String?   // ID from payment provider
-  metadata      Json?
-  retries       PaymentRetry[]
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  @@index([orderId])
-  @@index([customerId])
-  @@index([subscriptionId])
-  @@index([status])
-  @@index([provider])
+  id              String   @id @default(cuid())
+  amount          Float
+  currency        String
+  status          String
+  paymentIntentId String
+  customerId      String
+  processor       String   // 'stripe', 'bitpay', 'wyre', etc.
+  metadata        Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 }
 
-model PaymentRetry {
-  id        String   @id @default(cuid())
-  paymentId String
-  payment   Payment  @relation(fields: [paymentId], references: [id])
-  status    String   // PENDING, PROCESSING, COMPLETED, FAILED
-  metadata  Json?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([paymentId])
-  @@index([status])
-}
-
-enum NotificationType {
-  INFO
-  SUCCESS
-  WARNING
-  ERROR
-  PAYMENT_FAILED
-  SUBSCRIPTION_RENEWAL
-  USAGE_THRESHOLD
-}
-
-enum NotificationChannel {
-  EMAIL
-  IN_APP
-  SMS
-  WEBHOOK
-}
-
-model Notification {
-  id             String             @id @default(cuid())
-  type           NotificationType
-  userId         String?
-  organizationId String?
-  title          String
-  message        String
-  data           Json?
-  read           Boolean            @default(false)
-  channels       NotificationChannel[]
-  createdAt      DateTime           @default(now())
-  updatedAt      DateTime           @updatedAt
-  organization   Organization?      @relation(fields: [organizationId], references: [id])
-  user           User?             @relation(fields: [userId], references: [id])
-
-  @@index([userId])
-  @@index([organizationId])
-  @@index([type])
-}
-
-model TaxCalculation {
-  id          String   @id @default(cuid())
-  customerId  String
-  customer    Customer @relation(fields: [customerId], references: [id])
-  amount      Float
-  taxAmount   Float
-  details     Json
-  createdAt   DateTime @default(now())
-
-  @@index([customerId])
-}
-
-model ExchangeRate {
-  id           String   @id @default(cuid())
-  fromCurrency String
-  toCurrency   String
-  rate         Float
-  updatedAt    DateTime @default(now())
-
-  @@unique([fromCurrency, toCurrency])
-}
-
-model ApiKey {
-  id            String    @id @default(cuid())
-  organizationId String
-  organization  Organization @relation(fields: [organizationId], references: [id])
-  name          String
-  key           String
-  scopes        String[]
-  lastUsed      DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-
-  @@index([organizationId])
-}
-
-model StripeEvent {
-  id        String   @id @default(cuid())
-  eventId   String   @unique
-  type      String
-  data      Json
-  created   DateTime
-}
-
-model MarketingExpense {
-  id        String   @id @default(cuid())
-  amount    Float
-  date      DateTime
-  source    String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-enum PaymentStatus {
-  SUCCEEDED
-  FAILED
-  PENDING
-  REFUNDED
-}
-
-model BillingActivity {
-  id          String   @id @default(cuid())
-  timestamp   DateTime @default(now())
-  amount      Float
-  description String
-  status      String   @default("success")
-  customerId  String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@index([customerId])
-  @@index([timestamp])
-}
-
-model MetricData {
-  id        String   @id @default(cuid())
-  timestamp DateTime @default(now())
-  type      String
-  value     Float
-  createdAt DateTime @default(now())
-
-  @@index([type, timestamp])
+model FinancingOffer {
+  id         String   @id @default(cuid())
+  amount     Float
+  currency   String
+  provider   String   // 'stripe_capital', 'finbox', 'rutter'
+  customerId String
+  status     String
+  offerId    String
+  terms      Json
+  metadata   Json?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 }
 
 model CarbonEstimate {
-  id                String   @id @default(cuid())
-  organizationId    String
-  organization      Organization @relation(fields: [organizationId], references: [id])
-  amount            Float
-  currency          String
-  category          String    // CRYPTO_PAYMENT, API_USAGE, COMPUTE
-  estimatedEmissions Float
-  offsetCost        Float?
-  status            String    // ESTIMATED, OFFSET
-  offsetOrderId     String?
-  offsetPurchasedAt DateTime?
-  rawEstimate       Json
-  rawOrder          Json?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
-
-  @@index([organizationId])
-  @@index([category])
-  @@index([status])
+  id             String   @id @default(cuid())
+  transactionId  String
+  customerId     String
+  totalEmissions Float
+  breakdown      Json
+  patchEstimateId String
+  status         String
+  offsetStatus   String
+  offsetDetails  Json?
+  metadata       Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 }
 
 model BillingRule {
-  id             String       @id @default(cuid())
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id])
-  name           String
-  description    String?
-  type           String       // FIXED, USAGE, TIERED, VOLUME
-  currency       String
-  amount         Float
-  interval       String?      // MONTHLY, YEARLY
-  metadata       Json?
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
-
-  @@index([organizationId])
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  components  Json
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 model BillingRuleTemplate {
   id          String   @id @default(cuid())
   name        String
   description String?
-  type        String   // USAGE_BASED, TIERED, VOLUME, THRESHOLD
-  config      Json     // Template configuration
-  category    String   // API_USAGE, STORAGE, COMPUTE, etc.
-  status      String   // ACTIVE, INACTIVE
+  category    String
+  components  Json
+  isDefault   Boolean  @default(false)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
-
-  @@index([type, category])
-  @@index([status])
 }
 
 model Order {
@@ -467,6 +324,186 @@ model Order {
   @@index([organizationId])
   @@index([customerId])
   @@index([status])
+}
+
+model PriceHistory {
+  id          String   @id @default(cuid())
+  planId      String
+  plan        Plan     @relation(fields: [planId], references: [id])
+  price       Float
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+  reason      String?  // e.g. "market_adjustment", "test_result", "seasonal"
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  @@index([planId])
+}
+
+model PriceTest {
+  id          String   @id @default(cuid())
+  planId      String
+  plan        Plan     @relation(fields: [planId], references: [id])
+  name        String
+  description String?
+  startDate   DateTime
+  endDate     DateTime?
+  status      String   // PLANNED, ACTIVE, COMPLETED, CANCELLED
+  variants    PriceTestVariant[]
+  targetMetric String  // e.g. "conversion_rate", "revenue", "ltv"
+  minConfidence Float  // Required confidence level
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([planId])
+}
+
+model PriceTestVariant {
+  id          String   @id @default(cuid())
+  testId      String
+  test        PriceTest @relation(fields: [testId], references: [id])
+  price       Float
+  name        String
+  description String?
+  conversionRate Float?
+  revenue     Float?
+  subscribers Int     @default(0)
+  isControl   Boolean @default(false)
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([testId])
+}
+
+model MarketBenchmark {
+  id          String   @id @default(cuid())
+  segment     String
+  productType String
+  avgPrice    Float
+  medianPrice Float
+  minPrice    Float
+  maxPrice    Float
+  sampleSize  Int
+  source      String
+  collectedAt DateTime @default(now())
+  metadata    Json?
+
+  @@index([segment, productType])
+}
+
+model RevenueRecognitionRule {
+  id          String   @id @default(cuid())
+  planId      String
+  plan        Plan     @relation(fields: [planId], references: [id])
+  type        String   // IMMEDIATE, STRAIGHT_LINE, USAGE_BASED, MILESTONE
+  deferralPeriod Int?  // Days to defer revenue
+  conditions  Json?    // Conditions for recognition
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([planId])
+}
+
+model RevenueLedger {
+  id            String   @id @default(cuid())
+  subscriptionId String
+  amount        Float
+  currency      String
+  recognizedDate DateTime
+  deferredAmount Float?
+  deferredUntil DateTime?
+  type          String  // RECURRING, USAGE, ONE_TIME
+  status        String  // PENDING, RECOGNIZED, DEFERRED
+  metadata      Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([subscriptionId])
+  @@index([recognizedDate])
+}
+
+model ChurnPrediction {
+  id            String   @id @default(cuid())
+  subscriptionId String
+  probability   Float    // 0-1 probability of churning
+  factors       Json     // Contributing factors
+  nextBillDate  DateTime
+  predictedDate DateTime @default(now())
+  metadata      Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([subscriptionId])
+  @@index([probability])
+}
+
+model CohortAnalysis {
+  id          String   @id @default(cuid())
+  cohortDate  DateTime
+  cohortSize  Int
+  metric      String   // MRR, Churn, LTV, etc.
+  values      Json     // Time series data
+  segment     String?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([cohortDate])
+  @@index([metric])
+}
+
+model ForecastModel {
+  id           String          @id @default(uuid())
+  name         String
+  config       Json
+  metadata     Json?
+  status       String         // initializing, trained, error
+  createdAt    DateTime       @default(now())
+  lastTraining DateTime?
+  metrics      Json?
+  forecasts    ForecastResult[]
+  timeSeriesData TimeSeriesData[]
+}
+
+model TimeSeriesData {
+  id        String      @id @default(uuid())
+  timestamp DateTime
+  value     Float
+  metadata  Json?
+  modelId   String
+  model     ForecastModel @relation(fields: [modelId], references: [id])
+}
+
+model ForecastResult {
+  id          String    @id @default(uuid())
+  timestamp   DateTime
+  value       Float
+  lowerBound  Float?
+  upperBound  Float?
+  confidence  Float?
+  metadata    Json?
+  modelId     String
+  model       ForecastModel @relation(fields: [modelId], references: [id])
+}
+
+model MarketTrend {
+  id          String    @id @default(uuid())
+  timestamp   DateTime
+  trend       Float
+  seasonality Float?
+  metadata    Json?
+}
+
+model PredictionInterval {
+  id          String    @id @default(uuid())
+  timestamp   DateTime
+  lowerBound  Float
+  upperBound  Float
+  confidence  Float
+  metadata    Json?
 }
 
 // Additional models can be added here

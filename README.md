@@ -20,12 +20,30 @@
 - Usage tracking
 - Revenue analytics
 
+### 4. Crypto & Alternative Payments
+- Cryptocurrency support via BitPay integration
+- Alternative payment methods via Wyre
+- Stripe's crypto-compatible payment tools
+- Complete webhook support for all payment types
+
+### 5. Embedded Financial Services
+- Buy Now Pay Later options through multiple providers
+- Stripe Capital integration for business financing
+- FinBox integration for flexible payment plans
+- Rutter API support for unified financial services
+
+### 6. Climate-Conscious Billing
+- Carbon footprint tracking based on usage metrics
+- Visualization of emissions by service category
+- Optional carbon offsetting via Patch.io API
+- Climate-impact reporting for businesses
+
 ## Getting Started
 
 1. Install dependencies:
 ```bash
-npm install
-```
+   npm install
+   ```
 
 2. Set up environment variables:
 ```env
@@ -46,8 +64,8 @@ WYRE_WEBHOOK_SECRET=...
 
 3. Run the development server:
 ```bash
-npm run dev
-```
+   npm run dev
+   ```
 
 ## Usage
 

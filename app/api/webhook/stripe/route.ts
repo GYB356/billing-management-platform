@@ -17,7 +17,7 @@ const cryptoService = new StripeCryptoService(defaultCryptoConfig);
 // Webhook handler for Stripe events
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.text();
+  const body = await req.text();
     const signature = headers().get("stripe-signature");
 
     if (!signature || !process.env.STRIPE_WEBHOOK_SECRET) {
@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ received: true });
   } catch (error: any) {
     console.error("Error handling Stripe webhook:", error);
-    return NextResponse.json(
+      return NextResponse.json(
       { error: error.message || "Webhook handler failed" },
       { status: error.status || 500 }
     );

@@ -1,3 +1,10 @@
+import { 
+  RuleTemplate, 
+  BillingRuleType, 
+  ConditionOperator, 
+  ActionType 
+} from './types';
+
 export interface BillingRuleTemplate {
   id: string;
   name: string;
@@ -446,4 +453,107 @@ export const defaultTemplates: BillingRuleTemplate[] = [
       }
     }
   }
-]; 
+];
+
+export const billingTemplates: Record<string, RuleTemplate> = {
+  bandwidthTiered: {
+    id: 'bandwidthTiered',
+    name: 'Tiered Bandwidth Billing',
+    description: 'Applies different rates based on bandwidth usage tiers',
+    type: BillingRuleType.BANDWIDTH,
+    defaultConditions: [
+      {
+        field: 'usage.bandwidth',
+        operator: ConditionOperator.BETWEEN,
+        value: [0, 1000],
+        type: 'NUMBER'
+      }
+    ],
+    defaultActions: [
+      {
+        type: ActionType.APPLY_CHARGE,
+        parameters: {
+          amount: 0.08,
+          currency: 'USD',
+          per: 'GB'
+        }
+      }
+    ]
+  },
+
+  timeBasedUsage: {
+    id: 'timeBasedUsage',
+    name: 'Time-Based Usage Billing',
+    description: 'Charges based on time of usage with peak/off-peak rates',
+    type: BillingRuleType.TIME_BASED,
+    defaultConditions: [
+      {
+        field: 'time.hour',
+        operator: ConditionOperator.BETWEEN,
+        value: [9, 17],
+        type: 'NUMBER'
+      }
+    ],
+    defaultActions: [
+      {
+        type: ActionType.APPLY_CHARGE,
+        parameters: {
+          amount: 1.5,
+          currency: 'USD',
+          per: 'hour'
+        }
+      }
+    ]
+  },
+
+  eventBasedBilling: {
+    id: 'eventBasedBilling',
+    name: 'Event-Based Billing',
+    description: 'Charges based on specific events or API calls',
+    type: BillingRuleType.EVENT_BASED,
+    defaultConditions: [
+      {
+        field: 'event.type',
+        operator: ConditionOperator.EQUALS,
+        value: 'api_call',
+        type: 'STRING'
+      }
+    ],
+    defaultActions: [
+      {
+        type: ActionType.APPLY_CHARGE,
+        parameters: {
+          amount: 0.0001,
+          currency: 'USD',
+          per: 'call'
+        }
+      }
+    ]
+  },
+
+  hybridSubscription: {
+    id: 'hybridSubscription',
+    name: 'Hybrid Subscription Model',
+    description: 'Base subscription fee plus usage-based charges',
+    type: BillingRuleType.HYBRID,
+    defaultConditions: [
+      {
+        field: 'subscription.status',
+        operator: ConditionOperator.EQUALS,
+        value: 'active',
+        type: 'STRING'
+      }
+    ],
+    defaultActions: [
+      {
+        type: ActionType.APPLY_CHARGE,
+        parameters: {
+          amount: 49.99,
+          currency: 'USD',
+          recurring: true,
+          interval: 'month'
+        }
+      }
+    ]
+  }
+}; 

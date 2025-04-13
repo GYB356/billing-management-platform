@@ -280,7 +280,7 @@ export async function DELETE(request: NextRequest) {
     });
 
     if (!userOrg?.organization?.stripeCustomerId) {
-      return NextResponse.json(
+    return NextResponse.json(
         { error: 'No organization or Stripe customer found' },
         { status: 404 }
       );

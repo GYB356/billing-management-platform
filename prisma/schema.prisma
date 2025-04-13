@@ -38,7 +38,10 @@ model Organization {
   apiKeys         ApiKey[]
   carbonEstimates CarbonEstimate[]
   billingRules    BillingRule[]
+  billingTemplates BillingRuleTemplate[]
   orders          Order[]
+
+  @@index([email])
 }
 
 model Customer {
@@ -245,16 +248,25 @@ model WebhookDelivery {
 }
 
 model Payment {
-  id              String   @id @default(cuid())
-  amount          Float
-  currency        String
-  status          String
-  paymentIntentId String
-  customerId      String
-  processor       String   // 'stripe', 'bitpay', 'wyre', etc.
-  metadata        Json?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id            String   @id @default(cuid())
+  customerId    String
+  customer      Customer @relation(fields: [customerId], references: [id])
+  subscriptionId String?
+  subscription  Subscription? @relation(fields: [subscriptionId], references: [id])
+  orderId       String?
+  order         Order?    @relation(fields: [orderId], references: [id])
+  amount        Float
+  currency      String
+  status        String
+  stripePaymentId String?
+  processor     String   // 'stripe', 'bitpay', 'wyre', etc.
+  metadata      Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([customerId])
+  @@index([subscriptionId])
+  @@index([orderId])
 }
 
 model FinancingOffer {
@@ -272,39 +284,53 @@ model FinancingOffer {
 }
 
 model CarbonEstimate {
-  id             String   @id @default(cuid())
-  transactionId  String
-  customerId     String
-  totalEmissions Float
-  breakdown      Json
-  patchEstimateId String
-  status         String
-  offsetStatus   String
-  offsetDetails  Json?
-  metadata       Json?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id            String   @id @default(cuid())
+  organizationId String
+  organization  Organization @relation(fields: [organizationId], references: [id])
+  amount        Float
+  unit          String   // e.g., "kgCO2e"
+  source        String   // e.g., "patch", "internal"
+  category      String   // e.g., "compute", "storage", "network"
+  timestamp     DateTime @default(now())
+  metadata      Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([organizationId])
+  @@index([category])
 }
 
 model BillingRule {
   id          String   @id @default(cuid())
   name        String
   description String?
-  components  Json
+  type        String   // BANDWIDTH, TIME_BASED, EVENT_BASED, HYBRID
+  conditions  Json[]   // Array of billing conditions
+  actions     Json[]   // Array of billing actions
+  priority    Int      @default(0)
   isActive    Boolean  @default(true)
+  organizationId String
+  organization Organization @relation(fields: [organizationId], references: [id])
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  @@index([organizationId])
 }
 
 model BillingRuleTemplate {
   id          String   @id @default(cuid())
   name        String
   description String?
-  category    String
-  components  Json
+  type        String   // BANDWIDTH, TIME_BASED, EVENT_BASED, HYBRID
+  conditions  Json[]   // Default conditions
+  actions     Json[]   // Default actions
   isDefault   Boolean  @default(false)
+  organizationId String
+  organization Organization @relation(fields: [organizationId], references: [id])
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  @@index([organizationId])
 }
 
 model Order {
@@ -504,6 +530,51 @@ model PredictionInterval {
   upperBound  Float
   confidence  Float
   metadata    Json?
+}
+
+model Notification {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id])
+  organizationId String
+  organization  Organization @relation(fields: [organizationId], references: [id])
+  type          String
+  message       String
+  read          Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([userId])
+  @@index([organizationId])
+}
+
+model ApiKey {
+  id            String   @id @default(cuid())
+  organizationId String
+  organization  Organization @relation(fields: [organizationId], references: [id])
+  name          String
+  key           String   @unique
+  lastUsed      DateTime?
+  expiresAt     DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([organizationId])
+}
+
+model TaxCalculation {
+  id            String   @id @default(cuid())
+  customerId    String
+  customer      Customer @relation(fields: [customerId], references: [id])
+  amount        Float
+  taxRate       Float
+  taxAmount     Float
+  country       String
+  state         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([customerId])
 }
 
 // Additional models can be added here

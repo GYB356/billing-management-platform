@@ -73,8 +73,8 @@ export function DraggableRuleBuilder({ onSave, initialRule }: Props) {
           customizedRule.components.findIndex(c => c.id === over.id)
         );
 
-        setCustomizedRule({
-          ...customizedRule,
+    setCustomizedRule({
+      ...customizedRule,
           components: newComponents
         });
       }
@@ -101,16 +101,16 @@ export function DraggableRuleBuilder({ onSave, initialRule }: Props) {
         {/* Templates Panel */}
         <div className="col-span-1 border-r pr-6">
           <h2 className="text-xl font-semibold mb-4">Templates</h2>
-          {Object.entries(templatesByCategory).map(([category, templates]) => (
+            {Object.entries(templatesByCategory).map(([category, templates]) => (
             <div key={category} className="mb-6">
-              <h3 className="text-lg font-semibold capitalize">{category}</h3>
+                <h3 className="text-lg font-semibold capitalize">{category}</h3>
               <div className="space-y-2 mt-2">
                 {templates.map(template => (
                   <button
-                    key={template.id}
+                      key={template.id}
                     onClick={() => handleTemplateSelect(template)}
                     className={`w-full p-3 text-left rounded-lg transition ${
-                      selectedTemplate?.id === template.id
+                        selectedTemplate?.id === template.id
                         ? 'bg-blue-100 border-blue-500'
                         : 'bg-gray-50 hover:bg-gray-100'
                     }`}
@@ -118,11 +118,11 @@ export function DraggableRuleBuilder({ onSave, initialRule }: Props) {
                     <div className="font-medium">{template.name}</div>
                     <div className="text-sm text-gray-600">{template.description}</div>
                   </button>
-                ))}
+                  ))}
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
 
         {/* Rule Builder Panel */}
         <div className="col-span-2">

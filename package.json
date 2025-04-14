@@ -51,7 +51,14 @@
     "zod": "^3.22.4",
     "@types/node": "^20.10.5",
     "@types/react": "^18.2.45",
-    "@types/react-dom": "^18.2.18"
+    "@types/react-dom": "^18.2.18",
+    "recharts": "^2.12.0",
+    "date-fns": "^2.30.0",
+    "socket.io": "^4.7.4",
+    "socket.io-client": "^4.7.4",
+    "d3": "^7.8.5",
+    "stats-lite": "^2.2.0",
+    "mathjs": "^12.3.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.13",
@@ -78,7 +85,10 @@
     "typescript": "^5.3.3",
     "tailwindcss": "^3.3.6",
     "autoprefixer": "^10.4.16",
-    "postcss": "^8.4.32"
+    "postcss": "^8.4.32",
+    "@types/d3": "^7.4.3",
+    "@types/socket.io": "^3.0.2",
+    "@types/socket.io-client": "^3.0.0"
   },
   "jest": {
     "preset": "ts-jest",

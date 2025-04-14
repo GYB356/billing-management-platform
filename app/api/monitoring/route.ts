@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
-import { MonitoringService } from '@/lib/services/monitoring-service';
+import { MonitoringService } from '@/app/services/monitoring/MonitoringService';
+import { AnomalyDetectionService } from '@/app/services/monitoring/AnomalyDetectionService';
 import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
 import { z } from 'zod';
 
 // Query parameters schema
@@ -10,43 +10,75 @@ const QuerySchema = z.object({
   endDate: z.string().optional(),
 });
 
+const monitoringService = new MonitoringService();
+const anomalyDetectionService = new AnomalyDetectionService();
+
 export async function GET(request: Request) {
   try {
-    // Check authentication
-    const session = await getServerSession(authOptions);
+    const session = await getServerSession();
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Parse query parameters
     const { searchParams } = new URL(request.url);
-    const query = QuerySchema.parse(Object.fromEntries(searchParams));
+    const metricName = searchParams.get('metricName');
+    const startTime = searchParams.get('startTime');
+    const endTime = searchParams.get('endTime');
 
-    // Convert date strings to Date objects if provided
-    const startDate = query.startDate ? new Date(query.startDate) : undefined;
-    const endDate = query.endDate ? new Date(query.endDate) : undefined;
+    if (!metricName) {
+      return NextResponse.json({ error: 'Metric name is required' }, { status: 400 });
+    }
 
-    // Get monitoring service instance
-    const monitoringService = MonitoringService.getInstance();
+    const startDate = startTime ? new Date(startTime) : new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const endDate = endTime ? new Date(endTime) : new Date();
 
-    // Get system health
-    const health = await monitoringService.getSystemHealth();
+    // Get metrics
+    const metrics = await monitoringService.getMetrics(metricName, startDate, endDate);
 
-    // Get performance metrics
-    const metrics = await monitoringService.getPerformanceMetrics({
-      startDate,
-      endDate,
-    });
+    // Get anomaly detection results
+    const anomalies = await anomalyDetectionService.detectAnomalies(metricName, startDate, endDate);
+
+    // Get trend analysis
+    const trend = await anomalyDetectionService.analyzeTrend(metricName, startDate, endDate);
 
     return NextResponse.json({
-      health,
       metrics,
-      timestamp: new Date(),
+      anomalies,
+      trend,
     });
   } catch (error) {
-    console.error('Failed to get monitoring data:', error);
+    console.error('Error in monitoring API:', error);
     return NextResponse.json(
-      { error: 'Failed to get monitoring data' },
+      { error: 'Internal server error' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    const session = await getServerSession();
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const body = await request.json();
+    const { name, value, tags } = body;
+
+    if (!name || value === undefined) {
+      return NextResponse.json(
+        { error: 'Name and value are required' },
+        { status: 400 }
+      );
+    }
+
+    const metric = await monitoringService.recordMetric(name, value, tags);
+
+    return NextResponse.json(metric);
+  } catch (error) {
+    console.error('Error in monitoring API:', error);
+    return NextResponse.json(
+      { error: 'Internal server error' },
       { status: 500 }
     );
   }

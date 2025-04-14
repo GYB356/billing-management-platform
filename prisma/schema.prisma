@@ -198,8 +198,13 @@ model Metric {
   id        String   @id @default(cuid())
   name      String
   value     Float
-  timestamp DateTime @default(now())
   tags      Json?
+  timestamp DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([name])
+  @@index([timestamp])
 }
 
 model EmailNotification {
@@ -247,26 +252,40 @@ model WebhookDelivery {
   @@index([webhookId])
 }
 
+model RefreshToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
 model Payment {
-  id            String   @id @default(cuid())
-  customerId    String
-  customer      Customer @relation(fields: [customerId], references: [id])
-  subscriptionId String?
-  subscription  Subscription? @relation(fields: [subscriptionId], references: [id])
-  orderId       String?
-  order         Order?    @relation(fields: [orderId], references: [id])
-  amount        Float
-  currency      String
-  status        String
-  stripePaymentId String?
-  processor     String   // 'stripe', 'bitpay', 'wyre', etc.
-  metadata      Json?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id                    String   @id @default(cuid())
+  amount                Float
+  currency              String
+  status                String
+  customerId            String
+  customer              Customer @relation(fields: [customerId], references: [id])
+  subscriptionId        String?
+  subscription          Subscription? @relation(fields: [subscriptionId], references: [id])
+  orderId               String?
+  order                 Order?    @relation(fields: [orderId], references: [id])
+  encryptedPaymentMethodId String?  // Encrypted payment method ID
+  processor             String   // 'stripe', 'bitpay', 'wyre', etc.
+  metadata              Json?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
 
   @@index([customerId])
   @@index([subscriptionId])
   @@index([orderId])
+  @@index([status])
 }
 
 model FinancingOffer {
@@ -575,6 +594,22 @@ model TaxCalculation {
   updatedAt     DateTime @updatedAt
 
   @@index([customerId])
+}
+
+model Alert {
+  id        String   @id @default(cuid())
+  type      String
+  message   String
+  severity  String
+  metadata  Json?
+  resolved  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([type])
+  @@index([severity])
+  @@index([resolved])
+  @@index([createdAt])
 }
 
 // Additional models can be added here

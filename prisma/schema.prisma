@@ -612,4 +612,19 @@ model Alert {
   @@index([createdAt])
 }
 
+model TaxRate {
+  id          String   @id @default(uuid())
+  countryCode String   @db.VarChar(2)
+  stateCode   String?  @db.VarChar(3)
+  name        String   @db.VarChar(100)
+  rate        Decimal  @db.Decimal(5, 4)
+  isActive    Boolean  @default(true)
+  isEU        Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([countryCode, stateCode])
+  @@index([isEU, isActive])
+}
+
 // Additional models can be added here

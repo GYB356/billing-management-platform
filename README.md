@@ -1,186 +1,156 @@
-# Advanced Billing System
+# Advanced Billing Management Platform
+
+A comprehensive billing management platform with AI-powered features, anomaly detection, and real-time analytics.
 
 ## Features
 
-### 1. Billing Rule Builder
-- Visual rule builder with templates
-- Customizable conditions and actions
-- Support for multiple pricing models
-- Real-time preview and validation
+- 🔒 **Enhanced Security**
+  - GitHub Advanced Security with CodeQL analysis
+  - Automated dependency updates with Dependabot
+  - Secret scanning with GitGuardian and Gitleaks
+  - Comprehensive error handling and validation
 
-### 2. Payment Processing
-- Stripe integration for card payments
-- BitPay for cryptocurrency
-- Wyre for alternative payments
-- Webhook handlers for all processors
+- 🚀 **Performance Optimizations**
+  - Redis-based caching for ML models with compression
+  - Batch operations for efficient data handling
+  - Asynchronous operations and worker threads
+  - Performance monitoring and logging
 
-### 3. Analytics and Reporting
-- Interactive metric dashboards
-- Plan comparison tools
-- Usage tracking
-- Revenue analytics
+- 🧪 **Comprehensive Testing**
+  - Extensive test coverage for critical modules
+  - Unit tests with Mocha, Chai, and Sinon
+  - Performance and integration tests
+  - Automated test coverage reporting
 
-### 4. Crypto & Alternative Payments
-- Cryptocurrency support via BitPay integration
-- Alternative payment methods via Wyre
-- Stripe's crypto-compatible payment tools
-- Complete webhook support for all payment types
-
-### 5. Embedded Financial Services
-- Buy Now Pay Later options through multiple providers
-- Stripe Capital integration for business financing
-- FinBox integration for flexible payment plans
-- Rutter API support for unified financial services
-
-### 6. Climate-Conscious Billing
-- Carbon footprint tracking based on usage metrics
-- Visualization of emissions by service category
-- Optional carbon offsetting via Patch.io API
-- Climate-impact reporting for businesses
+- 🛠️ **Developer Experience**
+  - Modern TypeScript codebase
+  - Shared utility modules for common operations
+  - Pre-commit hooks for linting and formatting
+  - Comprehensive documentation and type definitions
 
 ## Getting Started
 
-1. Install dependencies:
+### Prerequisites
+
+- Node.js >= 16
+- Redis server
+- PostgreSQL database
+
+### Installation
+
+1. Clone the repository:
 ```bash
-   npm install
-   ```
-
-2. Set up environment variables:
-```env
-# Stripe Configuration
-STRIPE_SECRET_KEY=sk_test_...
-STRIPE_WEBHOOK_SECRET=whsec_...
-
-# BitPay Configuration
-BITPAY_API_KEY=...
-BITPAY_WEBHOOK_SECRET=...
-
-# Wyre Configuration
-WYRE_API_KEY=...
-WYRE_SECRET_KEY=...
-WYRE_ACCOUNT_ID=...
-WYRE_WEBHOOK_SECRET=...
+git clone https://github.com/your-org/billing-management-platform.git
+cd billing-management-platform
 ```
 
-3. Run the development server:
+2. Install dependencies:
 ```bash
-   npm run dev
-   ```
-
-## Usage
-
-### Billing Rule Builder
-
-```typescript
-import RuleBuilder from '@/app/components/billing/RuleBuilder';
-
-export default function BillingPage() {
-  const handleRuleSave = (rule) => {
-    // Handle the saved rule
-    console.log('Saved rule:', rule);
-  };
-
-  return <RuleBuilder onSave={handleRuleSave} />;
-}
+npm install
 ```
 
-### Billing Metrics
-
-```typescript
-import BillingMetrics from '@/app/components/billing/BillingMetrics';
-
-const metrics = [
-  {
-    id: 'revenue',
-    name: 'Monthly Revenue',
-    value: 12500,
-    unit: 'currency',
-    trend: 15.5,
-    history: [
-      { date: '2024-01-01', value: 10000 },
-      { date: '2024-02-01', value: 11200 },
-      { date: '2024-03-01', value: 12500 }
-    ]
-  }
-];
-
-export default function DashboardPage() {
-  return <BillingMetrics metrics={metrics} period="month" />;
-}
+3. Set up environment variables:
+```bash
+cp .env.example .env
+# Edit .env with your configuration
 ```
 
-### Plan Comparison
-
-```typescript
-import PlanComparison from '@/app/components/billing/PlanComparison';
-
-const plans = [
-  {
-    id: 'basic',
-    name: 'Basic',
-    price: 29,
-    interval: 'month',
-    description: 'For small teams',
-    features: [
-      { name: 'Feature 1', included: true },
-      { name: 'API Calls', included: '10,000' }
-    ]
-  }
-];
-
-export default function PricingPage() {
-  return (
-    <PlanComparison
-      plans={plans}
-      onSelectPlan={(planId) => console.log('Selected plan:', planId)}
-    />
-  );
-}
+4. Run database migrations:
+```bash
+npm run migrate
 ```
+
+5. Start the development server:
+```bash
+npm run dev
+```
+
+## Architecture
+
+### Core Components
+
+- **API Layer**: Express.js with TypeScript
+- **Database**: PostgreSQL with Prisma ORM
+- **Caching**: Redis with compression
+- **ML Models**: TensorFlow.js with caching
+- **Monitoring**: Winston logging with performance tracking
+
+### Security Features
+
+- Request rate limiting
+- Input validation and sanitization
+- JWT-based authentication
+- Role-based access control
+- Secure password hashing
+- API key management
 
 ## Testing
 
 Run the test suite:
 ```bash
+# Run all tests
 npm test
+
+# Run with coverage
+npm run test:coverage
+
+# Run in watch mode
+npm run test:watch
 ```
 
-Key test files:
-- `__tests__/billing/rule-builder.test.tsx`
-- `__tests__/billing/billing-metrics.test.tsx`
+## Development
 
-## Webhook Endpoints
+### Code Style
 
-### Stripe Webhooks
-- Endpoint: `/api/webhooks/stripe`
-- Events: payment success/failure, subscription updates
+The project uses ESLint and Prettier for code formatting:
+```bash
+# Lint code
+npm run lint
 
-### BitPay Webhooks
-- Endpoint: `/api/webhooks/bitpay`
-- Events: payment completion, confirmation, expiration
+# Format code
+npm run format
+```
 
-### Wyre Webhooks
-- Endpoint: `/api/webhooks/wyre`
-- Events: order status updates, transfer completion
+### Pre-commit Hooks
 
-## Security
+The project uses Husky for pre-commit hooks:
+- Linting
+- Code formatting
+- Type checking
+- Test running
 
-1. **Webhook Verification**
-   - All webhooks verify signatures
-   - Rate limiting implemented
-   - IP filtering recommended
+### Documentation
 
-2. **Payment Processing**
-   - PCI compliance maintained
-   - Sensitive data never logged
-   - All transactions recorded
+- API documentation is available at `/api-docs` when running the server
+- TypeScript types and interfaces are documented using JSDoc
+- Comprehensive logging for debugging and monitoring
+
+## Recent Changes
+
+### Security Enhancements
+- Added GitHub Advanced Security features
+- Implemented secret scanning
+- Configured Dependabot
+
+### Performance Improvements
+- Implemented Redis caching for ML models
+- Added compression for large models
+- Introduced batch operations
+
+### Code Quality
+- Added shared utility modules
+- Enhanced type definitions
+- Improved error handling
+- Added comprehensive tests
 
 ## Contributing
 
 1. Fork the repository
-2. Create a feature branch
-3. Submit a pull request
+2. Create your feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
 
 ## License
 
-MIT License 
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details. 

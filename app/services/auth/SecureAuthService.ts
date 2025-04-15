@@ -2,91 +2,155 @@ import { prisma } from '@/lib/prisma';
 import { sign, verify } from 'jsonwebtoken';
 import { randomBytes } from 'crypto';
 import { User } from '@prisma/client';
+import { v4 as uuidv4 } from 'uuid';
+import { TransactionManager } from '@/utils/TransactionManager';
 
-const JWT_SECRET = process.env.JWT_SECRET;
-const REFRESH_TOKEN_SECRET = process.env.REFRESH_TOKEN_SECRET;
-const ACCESS_TOKEN_EXPIRY = '15m';
-const REFRESH_TOKEN_EXPIRY = '7d';
+interface TokenPayload {
+  userId: string;
+  sessionId: string;
+  role: string;
+}
+
+interface TokenResponse {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: number;
+}
 
 export class SecureAuthService {
-  async generateTokens(user: User) {
-    const accessToken = sign(
-      { userId: user.id, role: user.role },
-      JWT_SECRET!,
-      { expiresIn: ACCESS_TOKEN_EXPIRY }
-    );
+  private readonly accessTokenSecret: string;
+  private readonly refreshTokenSecret: string;
+  private readonly accessTokenExpiry: string = '15m'; // Short-lived access tokens
+  private readonly refreshTokenExpiry: string = '7d'; // Longer-lived refresh tokens
 
-    const refreshToken = sign(
-      { userId: user.id, tokenId: randomBytes(32).toString('hex') },
-      REFRESH_TOKEN_SECRET!,
-      { expiresIn: REFRESH_TOKEN_EXPIRY }
-    );
+  constructor() {
+    this.accessTokenSecret = process.env.JWT_ACCESS_SECRET || '';
+    this.refreshTokenSecret = process.env.JWT_REFRESH_SECRET || '';
 
-    // Store refresh token in database
-    await prisma.refreshToken.create({
-      data: {
-        token: refreshToken,
-        userId: user.id,
-        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
-      }
-    });
-
-    return { accessToken, refreshToken };
+    if (!this.accessTokenSecret || !this.refreshTokenSecret) {
+      throw new Error('JWT secrets not configured');
+    }
   }
 
-  async validateAccessToken(token: string): Promise<User | null> {
+  async login(userId: string, role: string): Promise<TokenResponse> {
+    // Generate a unique session ID
+    const sessionId = uuidv4();
+    
+    // Calculate expiry date for refresh token
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 7); // 7 days
+    
+    // Create a session record
+    await prisma.session.create({
+      data: {
+        id: sessionId,
+        userId,
+        expiresAt,
+        isValid: true
+      }
+    });
+    
+    // Generate tokens
+    return this.generateTokens({ userId, sessionId, role });
+  }
+
+  async refreshTokens(refreshToken: string): Promise<TokenResponse | null> {
     try {
-      const decoded = verify(token, JWT_SECRET!) as { userId: string };
-      return await prisma.user.findUnique({
-        where: { id: decoded.userId }
+      // Verify refresh token
+      const payload = verify(refreshToken, this.refreshTokenSecret) as TokenPayload;
+      
+      // Check if session is valid
+      const session = await prisma.session.findUnique({
+        where: { id: payload.sessionId }
       });
+      
+      if (!session || !session.isValid || session.expiresAt < new Date()) {
+        return null;
+      }
+      
+      // Invalidate the current session (one-time use refresh token)
+      await prisma.session.update({
+        where: { id: payload.sessionId },
+        data: { isValid: false }
+      });
+      
+      // Create a new session
+      return await this.login(payload.userId, payload.role);
+    } catch (error) {
+      console.error('Error refreshing token:', error);
+      return null;
+    }
+  }
+
+  async validateToken(token: string): Promise<TokenPayload | null> {
+    try {
+      // Verify access token
+      const payload = verify(token, this.accessTokenSecret) as TokenPayload;
+      
+      // Check if session is valid
+      const session = await prisma.session.findUnique({
+        where: { id: payload.sessionId }
+      });
+      
+      if (!session || !session.isValid || session.expiresAt < new Date()) {
+        return null;
+      }
+      
+      return payload;
     } catch (error) {
       return null;
     }
   }
 
-  async refreshAccessToken(refreshToken: string) {
+  async logout(sessionId: string): Promise<boolean> {
     try {
-      const decoded = verify(refreshToken, REFRESH_TOKEN_SECRET!) as { userId: string, tokenId: string };
+      // Invalidate the session
+      await prisma.session.update({
+        where: { id: sessionId },
+        data: { isValid: false }
+      });
       
-      // Verify token exists in database
-      const storedToken = await prisma.refreshToken.findFirst({
-        where: {
-          token: refreshToken,
-          userId: decoded.userId,
-          expiresAt: { gt: new Date() }
-        }
-      });
-
-      if (!storedToken) {
-        throw new Error('Invalid refresh token');
-      }
-
-      // Delete old refresh token
-      await prisma.refreshToken.delete({
-        where: { id: storedToken.id }
-      });
-
-      // Generate new tokens
-      const user = await prisma.user.findUnique({
-        where: { id: decoded.userId }
-      });
-
-      if (!user) {
-        throw new Error('User not found');
-      }
-
-      return this.generateTokens(user);
+      return true;
     } catch (error) {
-      throw new Error('Invalid refresh token');
+      console.error('Error logging out:', error);
+      return false;
     }
   }
 
-  async invalidateSession(userId: string) {
-    // Delete all refresh tokens for user
-    await prisma.refreshToken.deleteMany({
-      where: { userId }
+  async logoutAllSessions(userId: string): Promise<boolean> {
+    try {
+      // Invalidate all sessions for the user
+      await prisma.session.updateMany({
+        where: { userId, isValid: true },
+        data: { isValid: false }
+      });
+      
+      return true;
+    } catch (error) {
+      console.error('Error logging out all sessions:', error);
+      return false;
+    }
+  }
+
+  private generateTokens(payload: TokenPayload): TokenResponse {
+    // Generate access token (short-lived)
+    const accessToken = sign(payload, this.accessTokenSecret, {
+      expiresIn: this.accessTokenExpiry
     });
+    
+    // Generate refresh token (longer-lived)
+    const refreshToken = sign(payload, this.refreshTokenSecret, {
+      expiresIn: this.refreshTokenExpiry
+    });
+    
+    // Calculate expiry timestamp for the client
+    const expiresAt = Date.now() + 15 * 60 * 1000; // 15 minutes
+    
+    return {
+      accessToken,
+      refreshToken,
+      expiresAt
+    };
   }
 
   async validatePassword(user: User, password: string): Promise<boolean> {

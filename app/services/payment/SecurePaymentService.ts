@@ -1,123 +1,117 @@
 import { prisma } from '@/lib/prisma';
-import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
-import { Payment, PaymentProcessor } from '@prisma/client';
+import { encrypt, decrypt } from '@/lib/encryption';
+import { Transaction } from '@prisma/client';
+import { v4 as uuidv4 } from 'uuid';
 
-const ENCRYPTION_KEY = process.env.PAYMENT_ENCRYPTION_KEY;
-const IV_LENGTH = 16;
+interface SecurePaymentData {
+  cardNumber: string;
+  expiryDate: string;
+  cvv: string;
+  cardholderName: string;
+}
+
+interface PaymentResult {
+  success: boolean;
+  transactionId: string;
+  error?: string;
+}
 
 export class SecurePaymentService {
-  private encryptSensitiveData(data: string): string {
-    const iv = randomBytes(IV_LENGTH);
-    const cipher = createCipheriv('aes-256-gcm', Buffer.from(ENCRYPTION_KEY!, 'hex'), iv);
-    let encrypted = cipher.update(data, 'utf8', 'hex');
-    encrypted += cipher.final('hex');
-    const authTag = cipher.getAuthTag();
-    return `${iv.toString('hex')}:${encrypted}:${authTag.toString('hex')}`;
-  }
+  private readonly encryptionKey: string;
 
-  private decryptSensitiveData(encryptedData: string): string {
-    const [ivHex, encrypted, authTagHex] = encryptedData.split(':');
-    const iv = Buffer.from(ivHex, 'hex');
-    const authTag = Buffer.from(authTagHex, 'hex');
-    const decipher = createDecipheriv('aes-256-gcm', Buffer.from(ENCRYPTION_KEY!, 'hex'), iv);
-    decipher.setAuthTag(authTag);
-    let decrypted = decipher.update(encrypted, 'hex', 'utf8');
-    decrypted += decipher.final('utf8');
-    return decrypted;
+  constructor() {
+    this.encryptionKey = process.env.PAYMENT_ENCRYPTION_KEY;
+    if (!this.encryptionKey) {
+      throw new Error('Payment encryption key not configured');
+    }
   }
 
   async processPayment(
+    paymentData: SecurePaymentData,
     amount: number,
     currency: string,
-    paymentMethodId: string,
-    customerId: string,
     metadata: Record<string, any>
-  ): Promise<Payment> {
-    return await prisma.$transaction(async (tx) => {
-      try {
-        // Encrypt sensitive payment data
-        const encryptedPaymentMethodId = this.encryptSensitiveData(paymentMethodId);
+  ): Promise<PaymentResult> {
+    const transactionId = uuidv4();
+    
+    try {
+      // Start a database transaction
+      return await prisma.$transaction(async (tx) => {
+        // Encrypt sensitive data
+        const encryptedData = this.encryptPaymentData(paymentData);
         
         // Create payment record
         const payment = await tx.payment.create({
           data: {
+            id: transactionId,
             amount,
             currency,
             status: 'PENDING',
-            customerId,
-            encryptedPaymentMethodId,
-            processor: PaymentProcessor.STRIPE,
-            metadata: metadata
-          }
+            encryptedData,
+            metadata,
+          },
         });
 
-        // Process payment with Stripe
-        const stripePayment = await this.processStripePayment(
-          amount,
-          currency,
-          paymentMethodId,
-          customerId
-        );
+        // Process payment with payment processor
+        const processorResult = await this.processWithPaymentProcessor(paymentData, amount, currency);
+        
+        if (!processorResult.success) {
+          throw new Error(processorResult.error);
+        }
 
-        // Update payment record with result
-        const updatedPayment = await tx.payment.update({
-          where: { id: payment.id },
-          data: {
-            status: stripePayment.status,
-            stripePaymentId: stripePayment.id,
-            metadata: {
-              ...metadata,
-              stripeResponse: stripePayment
-            }
-          }
+        // Update payment status
+        await tx.payment.update({
+          where: { id: transactionId },
+          data: { status: 'COMPLETED' },
         });
 
-        return updatedPayment;
-      } catch (error) {
-        // Log error with proper sanitization
-        console.error('Payment processing failed:', {
-          error: error instanceof Error ? error.message : 'Unknown error',
-          customerId,
-          amount,
-          currency
-        });
-        throw error;
-      }
-    });
+        return {
+          success: true,
+          transactionId,
+        };
+      });
+    } catch (error) {
+      // Log error with proper sanitization
+      console.error('Payment processing failed:', {
+        transactionId,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+
+      return {
+        success: false,
+        transactionId,
+        error: 'Payment processing failed',
+      };
+    }
   }
 
-  private async processStripePayment(
+  private encryptPaymentData(data: SecurePaymentData): string {
+    return encrypt(JSON.stringify(data), this.encryptionKey);
+  }
+
+  private decryptPaymentData(encryptedData: string): SecurePaymentData {
+    return JSON.parse(decrypt(encryptedData, this.encryptionKey));
+  }
+
+  private async processWithPaymentProcessor(
+    paymentData: SecurePaymentData,
     amount: number,
-    currency: string,
-    paymentMethodId: string,
-    customerId: string
-  ) {
-    // Implement Stripe payment processing with proper error handling
-    // This is a placeholder - implement actual Stripe integration
-    return {
-      id: 'pi_123',
-      status: 'succeeded'
-    };
+    currency: string
+  ): Promise<{ success: boolean; error?: string }> {
+    // Implement actual payment processor integration
+    // This is a placeholder for the actual implementation
+    return { success: true };
   }
 
-  async getPaymentDetails(paymentId: string): Promise<Payment> {
+  async getPaymentDetails(transactionId: string): Promise<SecurePaymentData | null> {
     const payment = await prisma.payment.findUnique({
-      where: { id: paymentId }
+      where: { id: transactionId },
     });
 
     if (!payment) {
-      throw new Error('Payment not found');
+      return null;
     }
 
-    // Decrypt sensitive data when needed
-    if (payment.encryptedPaymentMethodId) {
-      const decryptedPaymentMethodId = this.decryptSensitiveData(payment.encryptedPaymentMethodId);
-      return {
-        ...payment,
-        encryptedPaymentMethodId: decryptedPaymentMethodId
-      };
-    }
-
-    return payment;
+    return this.decryptPaymentData(payment.encryptedData);
   }
 } 

@@ -7,46 +7,50 @@ import { analyzeUsagePatterns } from '../utils/usage';
 
 export class AdvancedMetricsCollector {
   static async collectUserEngagementMetrics() {
-    const today = new Date();
-    const yesterday = subDays(today, 1);
+    try {
+      const today = new Date();
+      const yesterday = subDays(today, 1);
 
-    // Active users
-    const activeUsers = await prisma.user.count({
-      where: {
-        lastActiveAt: {
-          gte: startOfDay(yesterday),
-          lte: endOfDay(yesterday),
+      // Active users
+      const activeUsers = await prisma.user.count({
+        where: {
+          lastActiveAt: {
+            gte: startOfDay(yesterday),
+            lte: endOfDay(yesterday),
+          },
         },
-      },
-    });
+      });
 
-    await metricsCollector.recordMetric('daily_active_users', activeUsers, {
-      date: yesterday.toISOString(),
-    });
+      await metricsCollector.recordMetric('daily_active_users', activeUsers, {
+        date: yesterday.toISOString(),
+      });
 
-    // Feature usage
-    const featureUsage = await prisma.usageRecord.groupBy({
-      by: ['featureId'],
-      where: {
-        timestamp: {
-          gte: startOfDay(yesterday),
-          lte: endOfDay(yesterday),
+      // Feature usage
+      const featureUsage = await prisma.usageRecord.groupBy({
+        by: ['featureId'],
+        where: {
+          timestamp: {
+            gte: startOfDay(yesterday),
+            lte: endOfDay(yesterday),
+          },
         },
-      },
-      _sum: {
-        quantity: true,
-      },
-    });
+        _sum: {
+          quantity: true,
+        },
+      });
 
-    for (const usage of featureUsage) {
-      await metricsCollector.recordMetric(
-        'feature_usage',
-        usage._sum.quantity || 0,
-        {
-          featureId: usage.featureId,
-          date: yesterday.toISOString(),
-        }
-      );
+      for (const usage of featureUsage) {
+        await metricsCollector.recordMetric(
+          'feature_usage',
+          usage._sum.quantity || 0,
+          {
+            featureId: usage.featureId,
+            date: yesterday.toISOString(),
+          }
+        );
+      }
+    } catch (error) {
+      console.error('Error collecting user engagement metrics:', error);
     }
   }
 

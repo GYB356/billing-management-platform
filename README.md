@@ -46,8 +46,8 @@ cd billing-management-platform
 
 2. Install dependencies:
 ```bash
-npm install
-```
+   npm install
+   ```
 
 3. Set up environment variables:
 ```bash
@@ -62,8 +62,8 @@ npm run migrate
 
 5. Start the development server:
 ```bash
-npm run dev
-```
+   npm run dev
+   ```
 
 ## Architecture
 

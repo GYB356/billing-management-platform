@@ -12,19 +12,18 @@ export const config = {
 const ioHandler = (req: NextApiRequest, res: any) => {
   if (!res.socket.server.io) {
     const httpServer: NetServer = res.socket.server as any;
-    const io = new Server(httpServer, {
-      path: '/api/socket',
-      addTrailingSlash: false,
-    });
+    const io = new Server(httpServer, { path: '/api/socket' });
 
     io.use(async (socket, next) => {
-      const session = await getSession({ req: socket.request as any });
-      if (!session) {
-        next(new Error('Unauthorized'));
-        return;
+      try {
+        const session = await getSession({ req: socket.request as any });
+        if (!session) throw new Error('Unauthorized');
+        socket.data.userId = session.user.id;
+        next();
+      } catch (error) {
+        console.error('Socket authentication error:', error.message);
+        next(error);
       }
-      socket.data.userId = session.user.id;
-      next();
     });
 
     io.on('connection', (socket) => {

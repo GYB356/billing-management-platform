@@ -8,9 +8,13 @@ interface CodeBlockProps {
   className?: string;
 }
 
-export function CodeBlock({ code, language = 'javascript', className = '' }: CodeBlockProps) {
+export function CodeBlock({
+  code,
+  language = 'javascript',
+  className = '',
+}: CodeBlockProps) {
   return (
-    <div className={`rounded-lg overflow-hidden ${className}`}>
+    <div className={`rounded-lg overflow-hidden ${className || ''}`}>
       <SyntaxHighlighter
         language={language}
         style={vscDarkPlus}

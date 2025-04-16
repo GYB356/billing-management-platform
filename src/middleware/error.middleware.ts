@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { AppError, PaymentError } from '../utils/errors';
+import { AppError } from '@/lib/errors';
 import { Logger } from '../utils/logger';
 
 export const errorHandler = (
@@ -8,6 +8,9 @@ export const errorHandler = (
   res: Response,
   next: NextFunction
 ) => {
+  const isProduction = process.env.NODE_ENV === 'production';
+  const errorDetails = !isProduction ? { detail: error.message, stack: error.stack } : {};
+
   // Log all errors
   Logger.error('Error occurred', {
     error: error.message,
@@ -20,43 +23,21 @@ export const errorHandler = (
   
   // Handle AppError instances
   if (error instanceof AppError) {
-    // Special handling for payment errors
-    if (error instanceof PaymentError) {
-      return res.status(error.statusCode).json({
-        error: error.message,
-        code: error.code,
-        details: error.isOperational ? error.gatewayResponse : undefined
-      });
-    }
-    
-    return res.status(error.statusCode).json({
-      error: error.message,
-      ...(error['errors'] && { validationErrors: error['errors'] })
-    });
+    return res.status(error.statusCode).json({ error: error.message, ...errorDetails });
   }
   
   // Handle Prisma errors
   if (error.name === 'PrismaClientKnownRequestError') {
-    return res.status(400).json({
-      error: 'Database operation failed',
-      code: 'DATABASE_ERROR',
-      ...(process.env.NODE_ENV !== 'production' && { detail: error.message })
-    });
+    return res.status(400).json({ error: 'Database error', ...errorDetails });
   }
   
   // Handle JWT errors
   if (error.name === 'JsonWebTokenError') {
-    return res.status(401).json({
-      error: 'Invalid token',
-      code: 'INVALID_TOKEN'
-    });
+    return res.status(401).json({ error: 'Authentication error', ...errorDetails });
   }
   
   if (error.name === 'TokenExpiredError') {
-    return res.status(401).json({
-      error: 'Token expired',
-      code: 'TOKEN_EXPIRED'
-    });
+    return res.status(401).json({ error: 'Token expired', ...errorDetails });
   }
   
   // Handle validation errors from express-validator
@@ -70,10 +51,5 @@ export const errorHandler = (
   // Unexpected errors
   console.error('Unexpected error:', error);
   
-  return res.status(500).json({
-    error: 'An unexpected error occurred',
-    code: 'INTERNAL_SERVER_ERROR',
-    // Don't expose internal error details in production
-    ...(process.env.NODE_ENV !== 'production' && { detail: error.message })
-  });
+  return res.status(500).json({ error: 'Internal server error', ...errorDetails });
 }; 

@@ -2,6 +2,7 @@ import { prisma } from '@/lib/prisma';
 import { NextRequest } from 'next/server';
 import { checkAndSendAlerts } from './alerts';
 import { PrismaClient } from '@prisma/client';
+import { SecurityEvent } from '@/types/security';
 
 export enum SecurityEventType {
   LOGIN_SUCCESS = 'LOGIN_SUCCESS',
@@ -26,19 +27,17 @@ export interface SecurityEvent {
 
 export async function logSecurityEvent(event: Omit<SecurityEvent, 'timestamp'>): Promise<void> {
   const prisma = new PrismaClient();
+
   try {
-    await prisma.securityEvent.create({
-      data: {
-        ...event,
-        timestamp: new Date(),
-      },
-    });
+    await prisma.securityEvent.create({ data: { ...event, timestamp: new Date() } });
 
     // Check for suspicious activity patterns
     await checkSuspiciousActivity(event);
     
     // Check and send alerts
     await checkAndSendAlerts(event);
+  } catch (error) {
+    console.error('Failed to log security event:', error.message);
   } finally {
     await prisma.$disconnect();
   }

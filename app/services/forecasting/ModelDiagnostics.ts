@@ -37,33 +37,30 @@ export class ModelDiagnostics {
     windowSize: number,
     step: number,
     modelFitFn: (trainData: typeof data) => any,
-    predictFn: (model: any, horizon: number) => number[]
+    predictFn: (model: any, horizon: number) => number[],
   ): RollingMetrics[] {
     const results: RollingMetrics[] = [];
-    
+
     for (let i = 0; i <= data.length - windowSize; i += step) {
       const windowData = data.slice(i, i + windowSize);
       const model = modelFitFn(windowData.slice(0, -1));
       const predictions = predictFn(model, 1);
-      
-      const actual = windowData[windowData.length - 1].value;
-      const predicted = predictions[0];
-      
+
+      const actual = windowData[windowData.length - 1]?.value;
+      const predicted = predictions[0] ?? 0;
+
       results.push({
-        window: {
-          start: windowData[0].timestamp,
-          end: windowData[windowData.length - 1].timestamp
-        },
+        window: { start: windowData[0]?.timestamp, end: windowData[windowData.length - 1]?.timestamp },
         metrics: {
-          mape: Math.abs((actual - predicted) / actual) * 100,
-          rmse: Math.sqrt(Math.pow(actual - predicted, 2)),
-          mae: Math.abs(actual - predicted),
-          r2: this.calculateR2([actual], [predicted])
+          mape: Math.abs((actual - predicted) / actual || 1) * 100,
+          rmse: Math.sqrt((actual - predicted) ** 2 || 0),
+          mae: Math.abs(actual - predicted || 0),
+          r2: this.calculateR2([actual], [predicted]),
         },
-        parameters: model.parameters
+        parameters: model.parameters,
       });
     }
-    
+
     return results;
   }
 

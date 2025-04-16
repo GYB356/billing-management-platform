@@ -13,24 +13,27 @@ export const reportTemplates: { [key: string]: ReportTemplate } = {
   customerLifetimeValue: {
     name: 'Customer Lifetime Value',
     description: 'Analyze customer value over their entire relationship',
-    generate: async (data) => {
-      const { customers, invoices, subscriptions } = data;
-      return customers.map((customer: any) => ({
-        customerId: customer.id,
-        customerName: customer.name,
-        totalRevenue: invoices
-          .filter((i: any) => i.customerId === customer.id)
-          .reduce((sum: number, i: any) => sum + i.amount, 0),
-        subscriptionMonths: subscriptions
-          .filter((s: any) => s.customerId === customer.id)
-          .reduce((sum: number, s: any) => sum + s.durationMonths, 0),
-        averageMonthlyRevenue: totalRevenue / subscriptionMonths,
-      }));
+    generate: async (data: { customers: any[]; invoices: any[]; subscriptions: any[] }) => {
+      return data.customers.map((customer) => {
+        const customerInvoices = data.invoices.filter((i) => i.customerId === customer.id);
+        const totalRevenue = customerInvoices.reduce((sum, i) => sum + i.amount, 0);
+        const subscriptionMonths = data.subscriptions
+          .filter((s) => s.customerId === customer.id)
+          .reduce((sum, s) => sum + s.durationMonths, 0);
+
+        return {
+          customerId: customer.id,
+          customerName: customer.name,
+          totalRevenue,
+          subscriptionMonths,
+          averageMonthlyRevenue: totalRevenue / subscriptionMonths || 0,
+        };
+      });
     },
     formatters: {
-      csv: (data) => convertToCSV(data),
-      pdf: (data) => generatePDFReport(data),
-      excel: (data) => generateExcelReport(data),
+      csv: convertToCSV,
+      pdf: generatePDFReport,
+      excel: generateExcelReport,
     },
   },
 

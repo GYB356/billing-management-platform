@@ -65,14 +65,8 @@ Object.defineProperty(window, 'matchMedia', {
   })),
 });
 
-// Mock fetch
-global.fetch = jest.fn(() =>
-  Promise.resolve({
-    json: () => Promise.resolve({}),
-    ok: true,
-    status: 200,
-  })
-);
+// Mock fetch globally
+global.fetch = jest.fn();
 
 // Mock Request
 class MockRequest {
@@ -144,7 +138,7 @@ jest.mock('next-auth', () => ({
   signOut: jest.fn(),
 }));
 
-// Clean up after each test
+// Reset all mocks after each test
 afterEach(() => {
   jest.clearAllMocks();
 }); 

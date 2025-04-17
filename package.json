@@ -54,7 +54,7 @@
     "next": "14.0.4",
     "node-cron": "^3.0.3",
     "nodemailer": "^6.9.8",
-    "openai": "^4.24.1",
+    "openai": "^4.95.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-hook-form": "^7.49.2",

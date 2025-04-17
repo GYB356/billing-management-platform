@@ -20,6 +20,7 @@ model User {
   updatedAt   DateTime @updatedAt
   notifications Notification[]
   role        String    @default("user")
+  refreshTokens RefreshToken[]
   // ...existing fields...
 
   @@index([email])

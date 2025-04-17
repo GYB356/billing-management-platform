@@ -22,8 +22,8 @@ export const reportTemplates: { [key: string]: ReportTemplate } = {
           .reduce((sum, s) => sum + s.durationMonths, 0);
 
         return {
-          customerId: customer.id,
-          customerName: customer.name,
+        customerId: customer.id,
+        customerName: customer.name,
           totalRevenue,
           subscriptionMonths,
           averageMonthlyRevenue: totalRevenue / subscriptionMonths || 0,

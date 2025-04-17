@@ -40,15 +40,15 @@ export class ModelDiagnostics {
     predictFn: (model: any, horizon: number) => number[],
   ): RollingMetrics[] {
     const results: RollingMetrics[] = [];
-
+    
     for (let i = 0; i <= data.length - windowSize; i += step) {
       const windowData = data.slice(i, i + windowSize);
       const model = modelFitFn(windowData.slice(0, -1));
       const predictions = predictFn(model, 1);
-
+      
       const actual = windowData[windowData.length - 1]?.value;
       const predicted = predictions[0] ?? 0;
-
+      
       results.push({
         window: { start: windowData[0]?.timestamp, end: windowData[windowData.length - 1]?.timestamp },
         metrics: {
@@ -60,7 +60,7 @@ export class ModelDiagnostics {
         parameters: model.parameters,
       });
     }
-
+    
     return results;
   }
 

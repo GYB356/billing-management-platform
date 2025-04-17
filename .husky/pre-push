@@ -1,3 +1,79 @@
 #!/bin/sh
-command -v git-lfs >/dev/null 2>&1 || { printf >&2 "\n%s\n\n" "This repository is configured for Git LFS but 'git-lfs' was not found on your path. If you no longer wish to use Git LFS, remove this hook by deleting the 'pre-push' file in the hooks directory (set by 'core.hookspath'; usually '.git/hooks')."; exit 2; }
-git lfs pre-push "$@"
+. "$(dirname "$0")/_/husky.sh"
+
+# Run tests
+echo "Running tests..."
+npm test || exit 1
+
+# Check for security vulnerabilities
+echo "Checking for security vulnerabilities..."
+npm audit || exit 1
+
+# Check for large files
+echo "Checking for large files..."
+git rev-list --objects --all | git cat-file --batch-check='%(objecttype) %(objectname) %(objectsize) %(rest)' | awk '$1 == "blob" && $3 >= 5242880 {print}' > large-files.txt
+if [ -s large-files.txt ]; then
+  echo "Warning: Large files detected (>5MB):"
+  cat large-files.txt
+  rm large-files.txt
+  read -p "Do you want to continue? (y/N) " -n 1 -r
+  echo
+  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    exit 1
+  fi
+fi
+
+# Check for sensitive data
+echo "Checking for sensitive data patterns..."
+PATTERNS="password|secret|key|token|credential|private"
+if git diff --cached -G"$PATTERNS" | grep -i "$PATTERNS"; then
+  echo "Warning: Possible sensitive data detected in changes"
+  read -p "Do you want to continue? (y/N) " -n 1 -r
+  echo
+  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    exit 1
+  fi
+fi
+
+# Check branch protection
+CURRENT_BRANCH=$(git symbolic-ref --short HEAD)
+PROTECTED_BRANCHES="^(main|master|develop|staging|production)$"
+if echo "$CURRENT_BRANCH" | grep -Eq "$PROTECTED_BRANCHES"; then
+  echo "Error: Direct push to protected branch '$CURRENT_BRANCH' is not allowed"
+  echo "Please create a pull request instead"
+  exit 1
+fi
+
+# Check code coverage
+echo "Checking code coverage..."
+npm run test:coverage
+
+# Get the coverage percentage from the coverage report
+COVERAGE=$(cat coverage/lcov.info | grep -E '^SF:' -A 1 | grep -E '^LF:|^LH:' | awk '{sum+=$2} END {print sum}')
+MIN_COVERAGE=80
+
+if [ "$COVERAGE" -lt "$MIN_COVERAGE" ]; then
+  echo "Error: Code coverage is below $MIN_COVERAGE%"
+  exit 1
+fi
+
+# Check for broken dependencies
+echo "Checking for broken dependencies..."
+npm ls 2>&1 | grep -E "missing:|invalid:" && exit 1
+
+# Check bundle size
+if [ -d ".next" ]; then
+  echo "Checking bundle size..."
+  npx next build
+  if [ -f ".next/stats.json" ]; then
+    # Check if any page bundle is larger than 500KB
+    if grep -q '"size":[5-9][0-9]{5,}' .next/stats.json; then
+      echo "Warning: Some bundles are larger than 500KB"
+      read -p "Do you want to continue? (y/N) " -n 1 -r
+      echo
+      if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        exit 1
+      fi
+    fi
+  fi
+fi

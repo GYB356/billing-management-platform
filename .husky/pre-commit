@@ -1,0 +1,77 @@
+#!/bin/sh
+. "$(dirname "$0")/_/husky.sh"
+
+# Check branch name format
+BRANCH_NAME=$(git symbolic-ref --short HEAD)
+BRANCH_PATTERN="^(feature|bugfix|hotfix|release|chore)\/[a-z0-9-]+$"
+if ! echo "$BRANCH_NAME" | grep -Eq "$BRANCH_PATTERN"; then
+  echo "Error: Branch name '$BRANCH_NAME' does not follow the convention: $BRANCH_PATTERN"
+  exit 1
+fi
+
+# Check for merge conflicts
+echo "Checking for merge conflicts..."
+if grep -r "^<<<<<<< HEAD$\|^=======\|^>>>>>>> " . --exclude-dir={node_modules,.git,.next} ; then
+  echo "Error: Merge conflicts found. Please resolve them before committing."
+  exit 1
+fi
+
+# Check email templates syntax
+echo "Checking email templates..."
+for file in lib/email/templates/*.ts; do
+  if [ -f "$file" ]; then
+    if ! npx tsc "$file" --noEmit --skipLibCheck; then
+      echo "Error: Invalid email template syntax in $file"
+      exit 1
+    fi
+  fi
+done
+
+# Run existing hooks
+npm run lint
+npm run format
+
+# Validate Prisma schema
+echo "Validating Prisma schema..."
+npx prisma validate || exit 1
+
+# Check for duplicate config files
+if [ -f ".eslintrc.js" ] && [ -f ".eslintrc.json" ]; then
+  echo "Error: Duplicate ESLint config files found (.eslintrc.js and .eslintrc.json)"
+  exit 1
+fi
+
+if [ -f ".prettierrc.js" ] && [ -f ".prettierrc" ]; then
+  echo "Error: Duplicate Prettier config files found (.prettierrc.js and .prettierrc)"
+  exit 1
+fi
+
+if [ -f "next.config.js" ] && [ -f "next.config.mjs" ]; then
+  echo "Error: Duplicate Next.js config files found (next.config.js and next.config.mjs)"
+  exit 1
+fi
+
+# Check for package version conflicts
+echo "Checking for package version conflicts..."
+if [ -f "package-lock.json" ]; then
+  CONFLICTS=$(npm ls | grep -i "UNMET\|INVALID")
+  if [ ! -z "$CONFLICTS" ]; then
+    echo "Error: Package version conflicts found:"
+    echo "$CONFLICTS"
+    exit 1
+  fi
+fi
+
+# Check TypeScript compilation
+echo "Checking TypeScript compilation..."
+npm run type-check || exit 1
+
+# Validate commit message format
+commit_msg=$(cat "$1")
+commit_pattern="^(feat|fix|docs|style|refactor|test|chore)(\(.+\))?: .{1,50}"
+if ! echo "$commit_msg" | grep -Eq "$commit_pattern"; then
+  echo "Error: Commit message does not follow conventional commits format."
+  echo "Format: type(scope): description"
+  echo "Types: feat, fix, docs, style, refactor, test, chore"
+  exit 1
+fi 

@@ -1,0 +1,37 @@
+#!/bin/sh
+. "$(dirname "$0")/_/husky.sh"
+
+# Get the commit message file
+COMMIT_MSG_FILE=$1
+COMMIT_SOURCE=$2
+
+# Only add template if this is not a merge commit or a commit with a message
+if [ -z "$COMMIT_SOURCE" ]; then
+  # Get the current branch name
+  BRANCH_NAME=$(git symbolic-ref --short HEAD)
+  
+  # Extract type and scope from branch name
+  if echo "$BRANCH_NAME" | grep -Eq "^(feature|bugfix|hotfix|release|chore)/"; then
+    TYPE=$(echo "$BRANCH_NAME" | cut -d'/' -f1)
+    SCOPE=$(echo "$BRANCH_NAME" | cut -d'/' -f2)
+    
+    # Convert branch types to conventional commit types
+    case "$TYPE" in
+      "feature") TYPE="feat" ;;
+      "bugfix") TYPE="fix" ;;
+      "hotfix") TYPE="fix" ;;
+      "release") TYPE="chore" ;;
+      "chore") TYPE="chore" ;;
+    esac
+    
+    # Create template
+    TEMPLATE="$TYPE($SCOPE): "
+    
+    # Only prepend template if commit message doesn't already match pattern
+    if ! grep -q "^$TYPE($SCOPE):" "$COMMIT_MSG_FILE"; then
+      echo "$TEMPLATE" > "$COMMIT_MSG_FILE.tmp"
+      cat "$COMMIT_MSG_FILE" >> "$COMMIT_MSG_FILE.tmp"
+      mv "$COMMIT_MSG_FILE.tmp" "$COMMIT_MSG_FILE"
+    fi
+  fi
+fi 

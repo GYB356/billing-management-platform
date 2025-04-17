@@ -12,7 +12,7 @@ export const advancedReportTemplates: { [key: string]: ReportTemplate } = {
         data.invoices,
         data.usageData,
       );
-
+      
       return {
         nextMonthPrediction: predictions.nextMonth,
         quarterlyForecast: predictions.quarterly,

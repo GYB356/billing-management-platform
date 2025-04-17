@@ -206,7 +206,7 @@ export class PayPalService {
     try {
       await withRetry(
         async () => {
-          switch (eventType) {
+    switch (eventType) {
             case 'PAYMENT.CAPTURE.COMPLETED':
               await this.updatePaymentStatus(resource, PaymentStatus.SUCCEEDED);
               break;
@@ -244,9 +244,9 @@ export class PayPalService {
     failureReason?: string
   ): Promise<void> {
     const payment = await this.prisma.payment.findFirst({
-      where: {
-        metadata: {
-          path: ['paypalOrderId'],
+          where: {
+            metadata: {
+              path: ['paypalOrderId'],
           equals: resource.supplementary_data?.related_ids.order_id,
         },
       },
@@ -267,11 +267,11 @@ export class PayPalService {
     await this.prisma.$transaction(async (tx) => {
       // Update payment status
       await tx.payment.update({
-        where: { id: payment.id },
-        data: {
+            where: { id: payment.id },
+            data: {
           status,
-          metadata: {
-            ...payment.metadata,
+              metadata: {
+                ...payment.metadata,
             webhookProcessedAt: new Date().toISOString(),
             failureReason,
             paypalResourceId: resource.id,
@@ -281,11 +281,11 @@ export class PayPalService {
 
       // Create notification for failed payments
       if (status === PaymentStatus.FAILED) {
-        await createNotification({
-          organizationId: payment.organizationId,
-          title: 'Payment Failed',
+          await createNotification({
+            organizationId: payment.organizationId,
+            title: 'Payment Failed',
           message: failureReason || 'Payment capture failed',
-          type: 'ERROR',
+            type: 'ERROR',
           metadata: {
             paymentId: payment.id,
             amount: payment.amount,

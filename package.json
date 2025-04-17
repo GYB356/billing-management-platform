@@ -110,7 +110,9 @@
   "jest": {
     "preset": "ts-jest",
     "testEnvironment": "node",
-    "setupFilesAfterEnv": ["<rootDir>/src/tests/setup.ts"],
+    "setupFilesAfterEnv": [
+      "<rootDir>/src/tests/setup.ts"
+    ],
     "moduleNameMapper": {
       "^@/(.*)$": "<rootDir>/src/$1"
     },
@@ -123,5 +125,22 @@
     "hooks": {
       "pre-commit": "npm run lint && npm run format"
     }
-  }
+  },
+  "directories": {
+    "doc": "docs",
+    "lib": "lib",
+    "test": "tests"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GYB356/billing-management-platform.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/GYB356/billing-management-platform/issues"
+  },
+  "homepage": "https://github.com/GYB356/billing-management-platform#readme"
 }

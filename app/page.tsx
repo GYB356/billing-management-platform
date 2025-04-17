@@ -1,47 +1,12 @@
+'use client';
+
 import Link from 'next/link';
 
-export default function HomePage() {
+export default function Page() {
   return (
     <div className="bg-gray-50">
-      {/* Navigation */}
-      <nav className="bg-white shadow">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center py-6">
-            <div className="text-indigo-600 font-bold text-2xl">BillingPro</div>
-            <div className="hidden md:flex items-center space-x-8">
-              <Link href="/features" className="text-base text-gray-500 hover:text-gray-900">
-                Features
-              </Link>
-              <Link href="/pricing" className="text-base text-gray-500 hover:text-gray-900">
-                Pricing
-              </Link>
-              <Link href="/about" className="text-base text-gray-500 hover:text-gray-900">
-                About
-              </Link>
-              <Link href="/contact" className="text-base text-gray-500 hover:text-gray-900">
-                Contact
-              </Link>
-            </div>
-            <div className="flex items-center space-x-4">
-              <Link
-                href="/auth/signin"
-                className="text-base font-medium text-gray-500 hover:text-gray-900"
-              >
-                Sign in
-              </Link>
-              <Link
-                href="/auth/signup"
-                className="inline-flex items-center px-4 py-2 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700"
-              >
-                Start free trial
-              </Link>
-            </div>
-          </div>
-        </div>
-      </nav>
-
       {/* Hero Section */}
-      <div className="relative bg-white">
+      <div className="relative bg-white py-12">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="lg:grid lg:grid-cols-12 lg:gap-8 lg:items-center">
             <div className="sm:text-center md:max-w-2xl md:mx-auto lg:col-span-6 lg:text-left">
@@ -59,7 +24,7 @@ export default function HomePage() {
                   Get Started
                 </Link>
                 <Link
-                  href="/demo"
+                  href="/dashboard"
                   className="px-6 py-3 text-base font-medium rounded-md text-indigo-600 bg-gray-100 hover:bg-gray-200"
                 >
                   Live Demo
@@ -69,7 +34,7 @@ export default function HomePage() {
             <div className="mt-10 relative lg:mt-0 lg:col-span-6">
               <img
                 className="w-full rounded-lg shadow-lg"
-                src="https://via.placeholder.com/600x400"
+                src="/api/placeholder/600/400"
                 alt="BillingPro Dashboard"
               />
             </div>

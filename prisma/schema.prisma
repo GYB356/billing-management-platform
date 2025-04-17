@@ -627,4 +627,23 @@ model TaxRate {
   @@index([isEU, isActive])
 }
 
+model Bill {
+  id          String   @id @default(cuid())
+  amount      Float
+  description String
+  status      String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Transaction {
+  id        String   @id @default(cuid())
+  amount    Float
+  type      String
+  status    String
+  metadata  Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 // Additional models can be added here

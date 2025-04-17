@@ -5,6 +5,8 @@ import { createNotification } from './notifications';
 import { NotificationChannel } from './types';
 import paypal from '@paypal/checkout-server-sdk';
 import { formatAmount } from './currency';
+import { PrismaClient } from '@prisma/client';
+import { withRetry } from '@/lib/utils/async';
 
 // PayPal environment setup
 const environment = process.env.NODE_ENV === 'production'
@@ -28,7 +30,44 @@ interface PayPalOrderParams {
   metadata?: Record<string, any>;
 }
 
+interface PayPalWebhookEvent {
+  id: string;
+  event_type: string;
+  resource: {
+    id: string;
+    status: string;
+    status_details?: {
+      reason: string;
+    };
+    supplementary_data?: {
+      related_ids: {
+        order_id: string;
+      };
+    };
+  };
+  create_time: string;
+}
+
+interface PayPalError extends Error {
+  response?: {
+    status: number;
+    data: {
+      name: string;
+      message: string;
+      debug_id: string;
+    };
+  };
+}
+
 export class PayPalService {
+  private readonly prisma: PrismaClient;
+  private readonly maxRetries = 3;
+  private readonly retryDelay = 1000;
+
+  constructor() {
+    this.prisma = new PrismaClient();
+  }
+
   /**
    * Create a PayPal order for one-time payment
    */
@@ -51,7 +90,7 @@ export class PayPalService {
       const order = await client.execute(request);
 
       // Create payment record
-      const payment = await prisma.payment.create({
+      const payment = await this.prisma.payment.create({
         data: {
           organizationId: params.organizationId,
           amount: params.amount,
@@ -102,7 +141,7 @@ export class PayPalService {
       const capture = await client.execute(request);
 
       // Find the associated payment
-      const payment = await prisma.payment.findFirst({
+      const payment = await this.prisma.payment.findFirst({
         where: {
           metadata: {
             path: ['paypalOrderId'],
@@ -116,7 +155,7 @@ export class PayPalService {
       }
 
       // Update payment status
-      const updatedPayment = await prisma.payment.update({
+      const updatedPayment = await this.prisma.payment.update({
         where: { id: payment.id },
         data: {
           status: PaymentStatus.SUCCEEDED,
@@ -130,7 +169,7 @@ export class PayPalService {
 
       // If there's an associated invoice, mark it as paid
       if (payment.invoiceId) {
-        await prisma.invoice.update({
+        await this.prisma.invoice.update({
           where: { id: payment.invoiceId },
           data: {
             status: 'PAID',
@@ -161,71 +200,103 @@ export class PayPalService {
   /**
    * Handle PayPal webhook events
    */
-  public async handleWebhookEvent(event: any) {
-    const eventType = event.event_type;
-    const resource = event.resource;
+  public async handleWebhookEvent(event: PayPalWebhookEvent): Promise<void> {
+    const { event_type: eventType, resource } = event;
 
-    switch (eventType) {
-      case 'PAYMENT.CAPTURE.COMPLETED': {
-        const payment = await prisma.payment.findFirst({
-          where: {
-            metadata: {
-              path: ['paypalOrderId'],
-              equals: resource.supplementary_data.related_ids.order_id
-            }
+    try {
+      await withRetry(
+        async () => {
+          switch (eventType) {
+            case 'PAYMENT.CAPTURE.COMPLETED':
+              await this.updatePaymentStatus(resource, PaymentStatus.SUCCEEDED);
+              break;
+            case 'PAYMENT.CAPTURE.DENIED':
+            case 'PAYMENT.CAPTURE.DECLINED':
+              await this.updatePaymentStatus(
+                resource,
+                PaymentStatus.FAILED,
+                resource.status_details?.reason
+              );
+              break;
+            default:
+              console.warn(`Unhandled PayPal webhook event: ${eventType}`);
           }
-        });
-
-        if (payment) {
-          await prisma.payment.update({
-            where: { id: payment.id },
-            data: {
-              status: PaymentStatus.SUCCEEDED,
-              metadata: {
-                ...payment.metadata,
-                webhookProcessedAt: new Date().toISOString()
-              }
-            }
-          });
-        }
-        break;
-      }
-
-      case 'PAYMENT.CAPTURE.DENIED':
-      case 'PAYMENT.CAPTURE.DECLINED': {
-        const payment = await prisma.payment.findFirst({
-          where: {
-            metadata: {
-              path: ['paypalOrderId'],
-              equals: resource.supplementary_data.related_ids.order_id
-            }
-          }
-        });
-
-        if (payment) {
-          await prisma.payment.update({
-            where: { id: payment.id },
-            data: {
-              status: PaymentStatus.FAILED,
-              metadata: {
-                ...payment.metadata,
-                failureReason: resource.status_details?.reason || 'Payment capture failed',
-                webhookProcessedAt: new Date().toISOString()
-              }
-            }
-          });
-
-          // Create notification for failed payment
-          await createNotification({
-            organizationId: payment.organizationId,
-            title: 'Payment Failed',
-            message: `Your payment of ${formatAmount(payment.amount, payment.currency)} could not be processed.`,
-            type: 'ERROR',
-            channels: [NotificationChannel.EMAIL, NotificationChannel.IN_APP]
-          });
-        }
-        break;
-      }
+        },
+        this.maxRetries,
+        this.retryDelay
+      );
+    } catch (error) {
+      const paypalError = error as PayPalError;
+      console.error('PayPal webhook processing error:', {
+        eventType,
+        resourceId: resource.id,
+        error: paypalError.message,
+        status: paypalError.response?.status,
+        debugId: paypalError.response?.data?.debug_id,
+      });
+      throw error; // Re-throw to trigger webhook retry
     }
+  }
+
+  private async updatePaymentStatus(
+    resource: PayPalWebhookEvent['resource'],
+    status: PaymentStatus,
+    failureReason?: string
+  ): Promise<void> {
+    const payment = await this.prisma.payment.findFirst({
+      where: {
+        metadata: {
+          path: ['paypalOrderId'],
+          equals: resource.supplementary_data?.related_ids.order_id,
+        },
+      },
+      select: {
+        id: true,
+        organizationId: true,
+        metadata: true,
+        amount: true,
+      },
+    });
+
+    if (!payment) {
+      throw new Error(
+        `Payment record not found for PayPal order: ${resource.supplementary_data?.related_ids.order_id}`
+      );
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      // Update payment status
+      await tx.payment.update({
+        where: { id: payment.id },
+        data: {
+          status,
+          metadata: {
+            ...payment.metadata,
+            webhookProcessedAt: new Date().toISOString(),
+            failureReason,
+            paypalResourceId: resource.id,
+          },
+        },
+      });
+
+      // Create notification for failed payments
+      if (status === PaymentStatus.FAILED) {
+        await createNotification({
+          organizationId: payment.organizationId,
+          title: 'Payment Failed',
+          message: failureReason || 'Payment capture failed',
+          type: 'ERROR',
+          metadata: {
+            paymentId: payment.id,
+            amount: payment.amount,
+            paypalOrderId: resource.supplementary_data?.related_ids.order_id,
+          },
+        });
+      }
+    });
+  }
+
+  async disconnect(): Promise<void> {
+    await this.prisma.$disconnect();
   }
 }

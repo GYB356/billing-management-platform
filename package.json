@@ -52,7 +52,7 @@
     "lucide-react": "^0.309.0",
     "mathjs": "^12.3.0",
     "micro": "^10.0.1",
-    "next": "14.0.4",
+    "next": "15.3.1",
     "next-auth": "^4.24.11",
     "node-cron": "^3.0.3",
     "nodemailer": "^6.9.8",

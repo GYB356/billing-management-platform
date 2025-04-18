@@ -1,85 +1,82 @@
-// Setup file for vitest
-import { vi } from 'vitest';
+/**
+ * Common test setup and utilities
+ */
 
-// Mock environment variables
-process.env.STRIPE_SECRET_KEY = 'test_stripe_key';
-process.env.NEXT_PUBLIC_API_URL = 'http://localhost:3000';
-process.env.DATABASE_URL = 'postgresql://test:test@localhost:5432/test';
-process.env.NEXTAUTH_SECRET = 'test-secret';
-process.env.NEXTAUTH_URL = 'http://localhost:3000';
+// Import required modules
+const request = require('supertest');
+const app = require('../app');
 
-// Mock next-auth
-vi.mock('next-auth', () => ({
-  getServerSession: vi.fn().mockResolvedValue({
-    user: {
-      id: 'test-user-id',
-      email: 'test@example.com',
-      name: 'Test User',
-      role: 'admin'
-    }
-  })
-}));
-
-// Mock stripe
-vi.mock('stripe', () => {
-  return function() {
-    return {
-      subscriptions: {
-        create: vi.fn().mockResolvedValue({ id: 'sub_123' }),
-        list: vi.fn().mockResolvedValue({ data: [] }),
-      },
-      customers: {
-        create: vi.fn().mockResolvedValue({ id: 'cus_123' }),
-      }
-    };
-  };
-});
-
-// Mock lib/stripe.ts
-vi.mock('@/lib/stripe', () => ({
-  stripe: {
-    subscriptions: {
-      create: vi.fn().mockResolvedValue({ id: 'sub_123' }),
-    },
-    customers: {
-      create: vi.fn().mockResolvedValue({ id: 'cus_123' }),
-    }
-  }
-}));
-
-// Mock prisma
-vi.mock('@/lib/prisma', () => ({
-  prisma: {
-    subscription: {
-      create: vi.fn().mockResolvedValue({
-        id: 'sub_123',
-        status: 'active',
-        planId: 'plan_123',
-        organizationId: 'org_123',
-        createdAt: new Date(),
-      }),
-      findMany: vi.fn().mockResolvedValue([
-        {
-          id: 'sub_123',
-          status: 'active',
-          planId: 'plan_123',
-          organizationId: 'org_123',
-          createdAt: new Date(),
-        }
-      ]),
-    },
-    plan: {
-      findUnique: vi.fn().mockResolvedValue({
-        id: 'plan_123',
-        name: 'Basic',
-        price: 9.99
-      }),
-    },
-    organization: {
-      findUnique: vi.fn().mockResolvedValue({
-        id: 'org_123',
-        name: 'Test Org'
-      }),
-    },
+// Sample test data for reuse across tests
+const testData = {
+  // User authentication
+  validUser: {
+    username: 'testuser',
+    password: 'Password123!'
   },
-}));
+  invalidUser: {
+    username: 'nonexistent',
+    password: 'wrong'
+  },
+  
+  // Sample entities
+  customer: {
+    id: '60d21b4667d0d8992e610c85',
+    name: 'Test Customer',
+    email: 'customer@example.com',
+    address: '123 Test St'
+  },
+  
+  invoice: {
+    id: '60d21b4667d0d8992e610c86',
+    customerId: '60d21b4667d0d8992e610c85',
+    amount: 100.00,
+    dueDate: '2023-12-31',
+    status: 'pending'
+  },
+  
+  // Non-existent IDs for 404 tests
+  nonExistentCustomerId: '60d21b4667d0d8992e610c99',
+  nonExistentInvoiceId: '60d21b4667d0d8992e610c98'
+};
+
+/**
+ * Helper function to get auth token for tests
+ * @returns {Promise<string>} JWT token
+ */
+async function getAuthToken() {
+  try {
+    const res = await request(app)
+      .post('/api/auth/login')
+      .send(testData.validUser);
+    
+    return res.body.token;
+  } catch (error) {
+    console.error('Error getting auth token:', error);
+    return null;
+  }
+}
+
+/**
+ * Helper function to create test resources before tests
+ */
+async function setupTestData() {
+  // This would create necessary test data in a real application
+  // For example, creating a test user, customer, etc.
+}
+
+/**
+ * Helper function to clean up test resources after tests
+ */
+async function cleanupTestData() {
+  // This would clean up test data in a real application
+  // For example, deleting test users, customers, etc.
+}
+
+module.exports = {
+  testData,
+  getAuthToken,
+  setupTestData,
+  cleanupTestData,
+  app,
+  request
+};

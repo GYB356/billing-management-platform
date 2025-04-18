@@ -1,25 +1,49 @@
 version: '3.8'
 
 services:
-  app:
+  api:
     build:
       context: .
       dockerfile: Dockerfile
+    image: secure-app:latest
+    container_name: secure-app
+    restart: unless-stopped
     ports:
       - "3000:3000"
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=${DATABASE_URL}
-      - REDIS_URL=redis://redis:6379
-    depends_on:
-      - redis
-      - db
-    restart: unless-stopped
+      - PORT=3000
+      # Uncomment and set these when ready for production
+      # - RATE_LIMIT_WINDOW_MS=60000
+      # - RATE_LIMIT_MAX_REQUESTS=60
+      # - AUTH_RATE_LIMIT_WINDOW_MS=900000
+      # - AUTH_RATE_LIMIT_MAX_REQUESTS=5
+      # - CORS_ORIGIN=https://yourdomain.com
+      # - SESSION_SECRET=your_secret_here
+      # - JWT_SECRET=your_jwt_secret_here
     networks:
       - app-network
-    volumes:
-      - ./logs:/app/logs
-      - ./backups:/app/backups
+    # Healthcheck to verify the application is running properly
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Optional MongoDB service
+  # mongo:
+  #   image: mongo:6
+  #   container_name: mongodb
+  #   restart: unless-stopped
+  #   environment:
+  #     - MONGO_INITDB_ROOT_USERNAME=admin
+  #     - MONGO_INITDB_ROOT_PASSWORD=password
+  #     - MONGO_INITDB_DATABASE=secure-app
+  #   volumes:
+  #     - mongodb-data:/data/db
+  #   networks:
+  #     - app-network
 
   db:
     image: postgres:15-alpine
@@ -59,7 +83,7 @@ services:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
       - ./ssl:/etc/nginx/ssl:ro
     depends_on:
-      - app
+      - api
     networks:
       - app-network
     restart: unless-stopped
@@ -71,3 +95,7 @@ networks:
 volumes:
   postgres-data:
   redis-data:
+
+# Uncomment if using MongoDB
+# volumes:
+#   mongodb-data:

@@ -1,156 +1,208 @@
-# Advanced Billing Management Platform
+# Secure Express API
 
-A comprehensive billing management platform with AI-powered features, anomaly detection, and real-time analytics.
+This project implements best security practices for a Node.js Express API, addressing common vulnerabilities and security concerns.
 
-## Features
+## Security Features Implemented
 
-- 🔒 **Enhanced Security**
-  - GitHub Advanced Security with CodeQL analysis
-  - Automated dependency updates with Dependabot
-  - Secret scanning with GitGuardian and Gitleaks
-  - Comprehensive error handling and validation
+1. **Rate Limiting**
+   - General API rate limiting (60 requests per minute)
+   - Stricter authentication endpoint rate limiting (5 requests per 15 minutes)
 
-- 🚀 **Performance Optimizations**
-  - Redis-based caching for ML models with compression
-  - Batch operations for efficient data handling
-  - Asynchronous operations and worker threads
-  - Performance monitoring and logging
+2. **Input Validation and Sanitization**
+   - Form data validation
+   - Query parameter sanitization
+   - MongoDB query sanitization to prevent NoSQL injection
+   - XSS protection through input sanitization
 
-- 🧪 **Comprehensive Testing**
-  - Extensive test coverage for critical modules
-  - Unit tests with Mocha, Chai, and Sinon
-  - Performance and integration tests
-  - Automated test coverage reporting
+3. **Error Handling**
+   - Centralized error handling with consistent response format
+   - Environment-aware error details (detailed in development, limited in production)
+   - Proper categorization and handling of different error types
+   - Structured logging for better debugging and monitoring
 
-- 🛠️ **Developer Experience**
-  - Modern TypeScript codebase
-  - Shared utility modules for common operations
-  - Pre-commit hooks for linting and formatting
-  - Comprehensive documentation and type definitions
+4. **Security Middleware**
+   - Request size limiting to prevent DoS attacks
+   - Security headers with Helmet
+   - CORS protection
+   - HTTP Parameter Pollution protection
+   - MongoDB query sanitization
 
-## Getting Started
+## Setup
 
-### Prerequisites
+### Local Development
 
-- Node.js >= 16
-- Redis server
-- PostgreSQL database
-
-### Installation
-
-1. Clone the repository:
-```bash
-git clone https://github.com/your-org/billing-management-platform.git
-cd billing-management-platform
-```
-
-2. Install dependencies:
-```bash
+1. Install dependencies:
+   ```
    npm install
    ```
 
-3. Set up environment variables:
-```bash
-cp .env.example .env
-# Edit .env with your configuration
-```
+2. Create a `.env` file based on `.env.example`:
+   ```
+   cp .env.example .env
+   ```
 
-4. Run database migrations:
-```bash
-npm run migrate
-```
+3. Run the application:
+   ```
+   npm start
+   ```
 
-5. Start the development server:
-```bash
+4. For development with auto-restart:
+   ```
    npm run dev
    ```
 
-## Architecture
+### Docker Deployment
 
-### Core Components
+The application uses a multi-stage Docker build for improved security and efficiency:
 
-- **API Layer**: Express.js with TypeScript
-- **Database**: PostgreSQL with Prisma ORM
-- **Caching**: Redis with compression
-- **ML Models**: TensorFlow.js with caching
-- **Monitoring**: Winston logging with performance tracking
+1. Build the Docker image:
+   ```
+   npm run docker:build
+   ```
 
-### Security Features
+2. Run the container:
+   ```
+   npm run docker:run
+   ```
 
-- Request rate limiting
-- Input validation and sanitization
-- JWT-based authentication
-- Role-based access control
-- Secure password hashing
-- API key management
+3. Alternatively, use Docker Compose:
+   ```
+   docker-compose up -d
+   ```
+
+### Docker Security Features
+
+- Multi-stage build to reduce image size and attack surface
+- Non-root user for running the application
+- Production-optimized Alpine-based image
+- Environment variable handling best practices
+- Docker health checks implemented
+
+## Error Handling
+
+The application implements a robust error handling system:
+
+### Centralized Error Handler
+
+All errors pass through a single global error handler middleware that:
+- Formats error responses consistently
+- Categorizes errors by type (validation, authentication, etc.)
+- Provides appropriate HTTP status codes
+- Limits sensitive information in production
+
+### Error Types Handled
+
+- **Validation Errors**: Missing or invalid fields
+- **Authentication Errors**: Invalid or expired tokens
+- **Database Errors**: Duplicate keys, invalid IDs, etc.
+- **File Upload Errors**: Size limits, unexpected files
+- **Custom Application Errors**: Business logic violations
+- **Uncaught Exceptions**: Server-side errors
+
+### Error Response Format
+
+All error responses follow this structure:
+```json
+{
+  "success": false,
+  "error": "Human readable error message",
+  "errorCode": "ERROR_CODE"
+}
+```
+
+In development mode, additional information is included:
+```json
+{
+  "success": false,
+  "error": "Human readable error message",
+  "errorCode": "ERROR_CODE",
+  "stack": "Error stack trace"
+}
+```
+
+### Async Error Handling
+
+Routes use a wrapper function to catch async errors without try/catch blocks:
+```javascript
+// Before
+app.get('/route', async (req, res, next) => {
+  try {
+    // Logic
+  } catch (error) {
+    next(error);
+  }
+});
+
+// After
+app.get('/route', asyncHandler(async (req, res) => {
+  // Logic - errors automatically caught and passed to error handler
+}));
+```
 
 ## Testing
 
-Run the test suite:
+The application includes comprehensive test coverage across different levels:
+
+### Running Tests
+
 ```bash
 # Run all tests
 npm test
 
-# Run with coverage
+# Run with coverage report
 npm run test:coverage
 
-# Run in watch mode
+# Run in watch mode (for development)
 npm run test:watch
+
+# Run only integration tests
+npm run test:integration
 ```
 
-## Development
+### Test Structure
 
-### Code Style
+- **Unit Tests**: Test individual functions and utilities
+  - Security utilities (sanitization, validation)
+  - Rate limiter configuration
 
-The project uses ESLint and Prettier for code formatting:
-```bash
-# Lint code
-npm run lint
+- **Integration Tests**: Test API endpoints and their interactions
+  - Authentication endpoints
+  - Invoice creation, retrieval, and payment processing
+  - Error handling and validation
 
-# Format code
-npm run format
-```
+- **End-to-End Tests**: Test complete user flows
+  - User authentication flow
+  - Invoice creation and payment workflow
 
-### Pre-commit Hooks
+### Test Coverage
 
-The project uses Husky for pre-commit hooks:
-- Linting
-- Code formatting
-- Type checking
-- Test running
+Tests have been designed to cover:
+- Happy path scenarios
+- Error handling and edge cases
+- Security validation
+- Authorization checks
+- Data validation rules
 
-### Documentation
+## Environment Variables
 
-- API documentation is available at `/api-docs` when running the server
-- TypeScript types and interfaces are documented using JSDoc
-- Comprehensive logging for debugging and monitoring
+The application uses a configuration system that loads from `.env` files in development and expects environment variables in production:
 
-## Recent Changes
+- `NODE_ENV` - Set to 'production' in production environments
+- `PORT` - Application port (default: 3000)
+- `RATE_LIMIT_WINDOW_MS` - General rate limit window in milliseconds
+- `RATE_LIMIT_MAX_REQUESTS` - Maximum requests per window
+- `AUTH_RATE_LIMIT_WINDOW_MS` - Auth rate limit window in milliseconds
+- `AUTH_RATE_LIMIT_MAX_REQUESTS` - Maximum auth requests per window
 
-### Security Enhancements
-- Added GitHub Advanced Security features
-- Implemented secret scanning
-- Configured Dependabot
+See `.env.example` for all available configuration options.
 
-### Performance Improvements
-- Implemented Redis caching for ML models
-- Added compression for large models
-- Introduced batch operations
+## Security Best Practices
 
-### Code Quality
-- Added shared utility modules
-- Enhanced type definitions
-- Improved error handling
-- Added comprehensive tests
-
-## Contributing
-
-1. Fork the repository
-2. Create your feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details. 
+- Keep all dependencies updated
+- Use HTTPS in production
+- Implement proper authentication (JWT, OAuth, etc.)
+- Set appropriate CORS policies
+- Add Content Security Policy headers
+- Consider adding CSRF protection for cookie-based authentication
+- Implement proper logging and monitoring
+- Regular security audits and penetration testing 

@@ -1,87 +1,107 @@
+const mongoose = require('mongoose');
+const { JsonWebTokenError, TokenExpiredError } = require('jsonwebtoken');
+
 /**
- * Global Error Handler Middleware
- * Provides consistent error response format across the application
+ * Global error handling system for consistent error responses
  */
 
-const config = require('../config');
-const logger = require('../utils/logger');
-
-// Custom error class for API errors
+// Custom error class with status code and isOperational flag
 class AppError extends Error {
   constructor(message, statusCode) {
     super(message);
     this.statusCode = statusCode;
-    this.isOperational = true;
+    this.status = `${statusCode}`.startsWith('4') ? 'fail' : 'error';
+    this.isOperational = true; // Indicates this is a known, operational error
+
     Error.captureStackTrace(this, this.constructor);
   }
 }
 
-// Error handler middleware
-const errorHandler = (err, req, res, next) => {
-  let error = { ...err };
-  error.message = err.message;
-  error.stack = err.stack;
-  
-  // Log the error
-  const logMeta = {
-    statusCode: error.statusCode || 500,
-    path: req.path,
-    method: req.method,
-    userId: req.user?.id || 'anonymous',
-    requestId: req.id,
-    stack: config.env === 'development' ? error.stack : undefined
-  };
-  
-  // Different types of errors
-  if (err.name === 'ValidationError') {
-    const messages = Object.values(err.errors).map(val => val.message);
-    error = new AppError(messages.join(', '), 400);
-    logger.warn(`Validation Error: ${error.message}`, logMeta);
-  } else if (err.code === 11000) {
-    const field = Object.keys(err.keyValue)[0];
-    error = new AppError(`Duplicate field value: ${field}`, 400);
-    logger.warn(`Duplicate Key Error: ${error.message}`, logMeta);
-  } else if (err.name === 'CastError') {
-    error = new AppError(`Invalid ${err.path}: ${err.value}`, 400);
-    logger.warn(`Cast Error: ${error.message}`, logMeta);
-  } else if (err.name === 'JsonWebTokenError') {
-    error = new AppError('Invalid token', 401);
-    logger.warn(`JWT Error: ${error.message}`, logMeta);
-  } else if (err.name === 'TokenExpiredError') {
-    error = new AppError('Token expired', 401);
-    logger.warn(`JWT Error: ${error.message}`, logMeta);
-  } else if (err.code === 'LIMIT_FILE_SIZE') {
-    error = new AppError('File too large', 400);
-    logger.warn(`File Upload Error: ${error.message}`, logMeta);
-  } else if (err.code === 'LIMIT_UNEXPECTED_FILE') {
-    error = new AppError('Unexpected file', 400);
-    logger.warn(`File Upload Error: ${error.message}`, logMeta);
-  } else if (error.statusCode === 404) {
-    logger.warn(`Not Found: ${error.message}`, logMeta);
-  } else if (error.statusCode >= 400 && error.statusCode < 500) {
-    // Client errors
-    logger.warn(`Client Error: ${error.message}`, logMeta);
-  } else {
-    // Server errors or uncaught exceptions
-    logger.error(`Server Error: ${error.message}`, logMeta);
-  }
-  
-  // Generate response
-  const response = {
-    success: false,
-    error: error.message || 'Server Error',
-    errorCode: err.code || 'UNKNOWN_ERROR'
-  };
-  
-  // Include stack trace in development environment
-  if (config.env === 'development') {
-    response.stack = error.stack;
-  }
-  
-  return res.status(error.statusCode || 500).json(response);
+// Handle known errors in development environment
+const sendErrorDev = (err, res) => {
+  res.status(err.statusCode).json({
+    status: err.status,
+    error: err,
+    message: err.message,
+    stack: err.stack
+  });
 };
 
+// Handle known errors in production environment
+const sendErrorProd = (err, res) => {
+  // Operational, trusted error: send message to client
+  if (err.isOperational) {
+    res.status(err.statusCode).json({
+      status: err.status,
+      message: err.message
+    });
+  } else {
+    // Programming or other unknown error: don't leak error details
+    console.error('ERROR 💥', err);
+    res.status(500).json({
+      status: 'error',
+      message: 'Something went wrong'
+    });
+  }
+};
+
+// Handle mongoose validation errors
+const handleValidationError = err => {
+  const errors = Object.values(err.errors).map(el => el.message);
+  const message = `Invalid input data: ${errors.join('. ')}`;
+  return new AppError(message, 400);
+};
+
+// Handle mongoose duplicate key errors
+const handleDuplicateFieldsError = err => {
+  const value = err.message.match(/(["'])(\\?.)*?\1/)[0];
+  const message = `Duplicate field value: ${value}. Please use another value.`;
+  return new AppError(message, 400);
+};
+
+// Handle mongoose CastError (invalid ID)
+const handleCastError = err => {
+  const message = `Invalid ${err.path}: ${err.value}`;
+  return new AppError(message, 400);
+};
+
+// Handle JWT errors
+const handleJWTError = () => 
+  new AppError('Invalid token. Please log in again.', 401);
+
+// Handle JWT expired error
+const handleJWTExpiredError = () => 
+  new AppError('Your token has expired. Please log in again.', 401);
+
+// Main error handling middleware
+const errorHandler = (err, req, res, next) => {
+  err.statusCode = err.statusCode || 500;
+  err.status = err.status || 'error';
+
+  if (process.env.NODE_ENV === 'development') {
+    sendErrorDev(err, res);
+  } else if (process.env.NODE_ENV === 'production') {
+    let error = { ...err };
+    error.message = err.message;
+    
+    if (err instanceof mongoose.Error.CastError) error = handleCastError(err);
+    if (err instanceof mongoose.Error.ValidationError) error = handleValidationError(err);
+    if (err.code === 11000) error = handleDuplicateFieldsError(err);
+    if (err instanceof JsonWebTokenError) error = handleJWTError();
+    if (err instanceof TokenExpiredError) error = handleJWTExpiredError();
+
+    sendErrorProd(error, res);
+  }
+};
+
+// Utility function to wrap async route handlers for error handling
+const asyncHandler = fn => (req, res, next) => {
+  fn(req, res, next).catch(next);
+};
+
+// Export everything
 module.exports = {
+  AppError,
   errorHandler,
-  AppError
+  asyncHandler
 }; 

@@ -2,49 +2,179 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [main]
+    branches: [ main, dev ]
   pull_request:
-    branches: [main]
+    branches: [ main, dev ]
 
 jobs:
   test:
+    name: Test
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '18'
-          cache: 'npm'
-      - name: Install dependencies
-        run: npm ci
-      - name: Lint
-        run: npm run lint
-      - name: Type check
-        run: npx tsc --noEmit
-      - name: Run tests
-        run: npm test
-        env:
-          DATABASE_URL: ${{ secrets.TEST_DATABASE_URL }}
+    
+    services:
+      mongodb:
+        image: mongo:5.0
+        ports:
+          - 27017:27017
 
-  deploy:
-    needs: test
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [16.x, 18.x]
+
     steps:
       - uses: actions/checkout@v3
-      - name: Setup Node.js
+      
+      - name: Use Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v3
         with:
-          node-version: '18'
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+          
       - name: Install dependencies
         run: npm ci
-      - name: Build
-        run: npm run build
-      - name: Deploy
-        uses: aws-actions/configure-aws-credentials@v1
+        
+      - name: Lint code
+        run: npm run lint
+        
+      - name: Run unit tests
+        run: npm run test:unit
+        
+      - name: Run integration tests
+        run: npm run test:integration
+        
+      - name: Generate test coverage report
+        run: npm run test:coverage
+        
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v3
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
-      - run: npm run deploy
+          name: coverage-report
+          path: coverage/
+          
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Use Node.js 18.x
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18.x
+          cache: 'npm'
+          
+      - name: Install dependencies
+        run: npm ci
+        
+      - name: Run npm audit
+        run: npm audit --production
+        
+      - name: Run OWASP Dependency Check
+        uses: dependency-check/Dependency-Check_Action@main
+        with:
+          project: 'Invoice-API'
+          path: '.'
+          format: 'HTML'
+          out: 'reports'
+          
+      - name: Upload security report
+        uses: actions/upload-artifact@v3
+        with:
+          name: security-reports
+          path: reports/
+          
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: [test, security-scan]
+    if: github.event_name == 'push'
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Use Node.js 18.x
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18.x
+          cache: 'npm'
+          
+      - name: Install dependencies
+        run: npm ci
+        
+      - name: Build Docker image
+        run: |
+          docker build -t invoice-api:${{ github.sha }} .
+          docker tag invoice-api:${{ github.sha }} invoice-api:latest
+          
+      - name: Login to Docker Registry
+        if: github.ref == 'refs/heads/main'
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ secrets.DOCKER_REGISTRY }}
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+          
+      - name: Push Docker image
+        if: github.ref == 'refs/heads/main'
+        run: |
+          docker tag invoice-api:latest ${{ secrets.DOCKER_REGISTRY }}/invoice-api:latest
+          docker tag invoice-api:latest ${{ secrets.DOCKER_REGISTRY }}/invoice-api:${{ github.sha }}
+          docker push ${{ secrets.DOCKER_REGISTRY }}/invoice-api:latest
+          docker push ${{ secrets.DOCKER_REGISTRY }}/invoice-api:${{ github.sha }}
+          
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    environment: staging
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Deploy to Staging Environment
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.STAGING_HOST }}
+          username: ${{ secrets.STAGING_USERNAME }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          script: |
+            cd /opt/invoice-api
+            docker pull ${{ secrets.DOCKER_REGISTRY }}/invoice-api:${{ github.sha }}
+            docker-compose down
+            echo "INVOICE_API_VERSION=${{ github.sha }}" > .env
+            docker-compose up -d
+            
+      - name: Run Integration Tests Against Staging
+        run: |
+          npm ci
+          STAGING_API_URL=${{ secrets.STAGING_API_URL }} npm run test:e2e
+          
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Deploy to Production Environment
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.PRODUCTION_HOST }}
+          username: ${{ secrets.PRODUCTION_USERNAME }}
+          key: ${{ secrets.PRODUCTION_SSH_KEY }}
+          script: |
+            cd /opt/invoice-api
+            docker pull ${{ secrets.DOCKER_REGISTRY }}/invoice-api:${{ github.sha }}
+            docker-compose down
+            echo "INVOICE_API_VERSION=${{ github.sha }}" > .env
+            docker-compose up -d
+            
+      - name: Verify Deployment
+        run: |
+          curl --fail ${{ secrets.PRODUCTION_API_URL }}/api/health || exit 1

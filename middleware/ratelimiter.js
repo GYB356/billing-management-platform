@@ -1,19 +1,20 @@
- 
+const rateLimit = require('express-rate-limit');
+const config = require('./config');
 
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // limit each IP to 5 requests per windowMs
-  message: 'Too many login attempts, please try again after 15 minutes',
+  windowMs: config.authRateLimiter.windowMs, // Default: 15 minutes
+  max: config.authRateLimiter.maxRequests, // Default: 5 requests per windowMs
+  message: 'Too many login attempts, please try again later',
   standardHeaders: true,
   legacyHeaders: false,
 });
 
 const apiLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 60, // limit each IP to 60 requests per windowMs
+  windowMs: config.rateLimiter.windowMs, // Default: 1 minute
+  max: config.rateLimiter.maxRequests, // Default: 60 requests per windowMs
   message: 'Too many requests, please try again later',
   standardHeaders: true,
   legacyHeaders: false,
 });
 
-module.exports = { authLimiter, apiLimiter };
+module.exports = { authLimiter, apiLimiter }; 

@@ -1,45 +1,67 @@
 # Multi-stage build for a more secure and optimized Node.js application
 
-# Stage 1: Build stage
-FROM node:18-slim AS builder
+###########
+# BUILDER #
+###########
+
+# Use Node Alpine for the build stage
+FROM node:18-alpine AS builder
+
+# Set working directory
 WORKDIR /app
 
-# Copy package files and install dependencies
+# Copy package.json and package-lock.json
 COPY package*.json ./
-# Use npm ci for clean installs in CI/CD environments
-RUN npm ci --only=production
 
-# Copy application code
+# Install all dependencies including devDependencies
+RUN npm ci
+
+# Copy source code
 COPY . .
 
-# If there's a build step (for TypeScript or other transpiled languages)
+# Build the application (if needed, uncomment)
 # RUN npm run build
 
-# Stage 2: Production stage
-FROM node:18-alpine
+# Remove development dependencies
+RUN npm prune --production
+
+##########
+# RUNNER #
+##########
+
+# Use Node Alpine for the final image
+FROM node:18-alpine AS runner
+
+# Set environment variables
+ENV NODE_ENV=production
+ENV PORT=3000
+
+# Create a non-root user for security
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 --ingroup nodejs nodeuser
+
+# Set working directory
 WORKDIR /app
 
-# Create app directory with proper permissions
-RUN mkdir -p /app && chown -R node:node /app
+# Copy only the necessary files from the builder stage
+COPY --from=builder --chown=nodeuser:nodejs /app/node_modules ./node_modules
+COPY --from=builder --chown=nodeuser:nodejs /app/package*.json ./
+COPY --from=builder --chown=nodeuser:nodejs /app/models ./models
+COPY --from=builder --chown=nodeuser:nodejs /app/middleware ./middleware
+COPY --from=builder --chown=nodeuser:nodejs /app/routes ./routes
+COPY --from=builder --chown=nodeuser:nodejs /app/utils ./utils
+COPY --from=builder --chown=nodeuser:nodejs /app/controllers ./controllers
+COPY --from=builder --chown=nodeuser:nodejs /app/server.js ./
 
-# Set NODE_ENV
-ENV NODE_ENV=production
+# Add health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+  CMD wget -q --spider http://localhost:$PORT/api/health || exit 1
 
-# Copy only necessary files from the builder stage
-COPY --from=builder --chown=node:node /app/package*.json ./
-COPY --from=builder --chown=node:node /app/node_modules ./node_modules
-COPY --from=builder --chown=node:node /app/*.js ./
-COPY --from=builder --chown=node:node /app/security.js ./
-COPY --from=builder --chown=node:node /app/ratelimiter.js ./
-
-# If you have a build output directory, copy it instead
-# COPY --from=builder --chown=node:node /app/dist ./dist
+# Switch to the non-root user
+USER nodeuser
 
 # Expose the port
-EXPOSE 3000
+EXPOSE $PORT
 
-# Use non-root user for security
-USER node
-
-# Use an array of commands for better signal handling
-CMD ["node", "app.js"] 
+# Start the application
+CMD ["node", "server.js"] 

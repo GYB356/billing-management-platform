@@ -2,10 +2,11 @@
 
 import { Suspense } from 'react';
 import { useAuth } from '@/hooks/useAuth';
-import DashboardOverview from './components/DashboardOverview';
 import { Skeleton } from '@/components/ui/skeleton';
+import SubscriptionStatus from './components/SubscriptionStatus';
+import DashboardOverview from './components/DashboardOverview';
 
-function LoadingState() {
+function LoadingState() { 
   return (
     <div className="space-y-6">
       <Skeleton className="h-12 w-48" />
@@ -36,6 +37,10 @@ export default function DashboardPage() {
       <h1 className="text-3xl font-bold text-gray-900 mb-8">
         Welcome, {session.user?.name || 'User'}!
       </h1>
+      {session.user?.id && (
+        <SubscriptionStatus userId={session.user.id} />
+      )}
+      <div className="my-8" />
       <Suspense fallback={<LoadingState />}>
         <DashboardOverview />
       </Suspense>

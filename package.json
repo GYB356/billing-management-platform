@@ -36,9 +36,14 @@
     "@types/node": "^20.11.20",
     "eslint": "^8.38.0",
     "jest": "^29.5.0",
+<<<<<<< HEAD
     "nodemon": "^2.0.22",
     "supertest": "^6.3.3",
     "typescript": "^5.3.3"
+=======
+    "nodemon": "^3.1.9",
+    "supertest": "^6.3.3"
+>>>>>>> 2b39eab2f25052cbb42277e1d656db53f6064eb6
   },
   "engines": {
     "node": ">=16.0.0"

@@ -49,3 +49,10 @@ export interface SubscriptionFilters {
   page?: number;
   limit?: number;
 }
+
+export interface PlanFilters {
+  isActive?: boolean;
+  interval?: 'month' | 'year';
+  sortBy?: 'price' | 'name';
+  sortOrder?: 'asc' | 'desc';
+}

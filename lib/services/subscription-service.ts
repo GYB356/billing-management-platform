@@ -1,30 +1,45 @@
-<<<<<<< HEAD
-=======
-
->>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
-import { stripe } from '@/lib/stripe';
-import { prisma } from '@/lib/prisma';
-import { 
-  Subscription, 
-  PricingPlan, 
+import { stripeApi } from '@/lib/stripe';
+import {
+  Subscription,
+  PricingPlan,
   Organization,
   SubscriptionStatus,
-  PlanFeature 
+  PlanFeature,
 } from '@prisma/client';
+import { handleApiError, createErrorResponse } from '@/lib/utils/error-handling';
 import { sendSubscriptionEmail } from '@/lib/email';
 import { InvoiceService } from './invoice-service';
 import { UsageService } from './usage-service';
-import Stripe from 'stripe';
-<<<<<<< HEAD
-import { addDays, addMonths, differenceInDays } from 'date-fns';
-=======
->>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
+import { retryOperation } from '../utils/retry';
+import { addDays, differenceInDays } from 'date-fns';
+import { Config, LogLevel } from '../config';
+import { EventManager } from '../events/events';
+import { backgroundJobManager } from '../background-jobs/background-job-manager';
+
+export interface IInvoiceService extends InvoiceService {}
+export interface IUsageService extends UsageService {}
+export interface IEventManager extends EventManager {}
+export interface IBackgroundJobManager extends typeof backgroundJobManager {}
+
+export interface IPrisma {
+  subscription: any;
+  organization: any;
+  pricingPlan: any;
+  $transaction: any;
+  planFeature: any;
+}
+
+export interface IConfig extends Config {}
+export interface IStripe extends typeof stripeApi {}
+
+export interface IBackgroundJob {
+  new (name: string, data?: any): any;
+}
 
 export interface SubscriptionParams {
   customerId: string;
   organizationId: string;
   planId: string;
-  priceId: string;
   quantity?: number;
   trialDays?: number;
   paymentMethodId?: string;
@@ -40,14 +55,11 @@ export interface PlanChangeParams {
   preserveUsage?: boolean;
   prorationDate?: Date;
 }
-
 export interface SubscriptionWithDetails extends Subscription {
   plan: PricingPlan;
   organization: Organization;
   planFeatures?: PlanFeature[];
 }
-
-<<<<<<< HEAD
 export interface PlanComparison {
   plans: Array<{
     id: string;
@@ -55,18 +67,22 @@ export interface PlanComparison {
     price: number;
     currency: string;
     interval: string;
-    features: Array<{
-      name: string;
-      included: boolean;
-      value?: string;
-    }>;
-    usageLimits: Array<{
-      featureKey: string;
-      limit: number;
-      interval: string;
-      overage: boolean;
-      overagePrice?: number;
-    }>;
+    features: Array<
+      {
+        name: string;
+        included: boolean;
+        value?: string;
+      }
+    >;
+    usageLimits: Array<
+      {
+        featureKey: string;
+        limit: number;
+        interval: string;
+        overage: boolean;
+        overagePrice?: number;
+      }
+    >;
   }>;
   differences: Array<{
     featureName: string;
@@ -74,25 +90,39 @@ export interface PlanComparison {
   }>;
 }
 
-=======
->>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
 export class SubscriptionService {
-  private readonly invoiceService: InvoiceService;
-  private readonly usageService: UsageService;
+  private readonly config: IConfig;
+  private readonly prisma: IPrisma;
+  private readonly stripeApi: IStripe;
 
-  constructor() {
-    this.invoiceService = new InvoiceService();
-    this.usageService = new UsageService();
+
+  constructor(
+    private readonly invoiceService: IInvoiceService,
+    private readonly usageService: IUsageService,
+    private readonly prisma: PrismaClient,
+    private readonly stripeApi: Stripe,
+    private readonly eventManager: IEventManager,
+    private readonly backgroundJobManager: IBackgroundJobManager,
+    private readonly BackgroundJob: typeof BackgroundJob,
+    config: IConfig,
+    prisma: IPrisma,
+    stripeApi: IStripe,
+
+  ) {
   }
 
   /**
    * Creates a new subscription
    */
-  public async createSubscription(params: SubscriptionParams): Promise<SubscriptionWithDetails> {
-    const { 
-      customerId,
+  public async createSubscription(
+    params: SubscriptionParams
+  ): Promise<SubscriptionWithDetails> {
+    const {
+      priceId,
       organizationId,
       planId,
+      customerId,
+      organizationId,
       priceId,
       quantity = 1,
       trialDays,
@@ -103,31 +133,32 @@ export class SubscriptionService {
     } = params;
 
     // Get the organization
-    const organization = await prisma.organization.findUnique({
-      where: { id: organizationId }
+    const organization = await this.prisma.organization.findUnique({
+      where: { id: organizationId },
     });
 
     if (!organization) {
       throw new Error('Organization not found');
     }
 
-    // Get the plan
-    const plan = await prisma.pricingPlan.findUnique({
-      where: { id: planId }
+    const plan = await this.prisma.pricingPlan.findUnique({
+      where: { id: planId },
     });
 
-    if (!plan) {
-      throw new Error('Plan not found');
+    
+        if (!plan) {
+        throw new Error('Plan not found') ;
     }
 
     // Create Stripe subscription if Stripe is enabled
     let stripeSubscription;
+
     if (organization.stripeCustomerId) {
       const stripeSubscriptionParams: Stripe.SubscriptionCreateParams = {
         customer: organization.stripeCustomerId,
         items: [{ price: priceId, quantity }],
-        expand: ['latest_invoice.payment_intent'],
-        metadata: {
+        expand: ["latest_invoice.payment_intent"],
+          metadata: {
           organizationId,
           planId,
           ...metadata
@@ -154,8 +185,10 @@ export class SubscriptionService {
         stripeSubscriptionParams.default_tax_rates = taxRateIds;
       }
 
-      stripeSubscription = await stripe.subscriptions.create(stripeSubscriptionParams);
-    }
+      stripeSubscription = await retryOperation(() => this.stripeApi.subscriptions.create(stripeSubscriptionParams), 3, 1000).catch((error)=> handleApiError(error));
+      
+    } 
+
 
     // Create subscription in database
     const subscription = await prisma.subscription.create({
@@ -182,8 +215,8 @@ export class SubscriptionService {
       }
     });
 
-    // Send email notification
-    await sendSubscriptionEmail(
+      // Send email notification
+     await sendSubscriptionEmail(
       organization.email!,
       'subscription_created',
       {
@@ -194,6 +227,17 @@ export class SubscriptionService {
         currency: plan.currency
       }
     );
+
+    // Emit subscription created event
+    this.eventManager.emit('subscription.created', {
+        subscriptionId: subscription.id,
+        organizationId: subscription.organizationId,
+        planId: subscription.planId,
+        quantity: subscription.quantity,
+        trialEndsAt: subscription.trialEndsAt,
+        currentPeriodEnd: subscription.currentPeriodEnd,
+        currentPeriodStart: subscription.currentPeriodStart
+      });
 
     return subscription;
   }
@@ -208,7 +252,7 @@ export class SubscriptionService {
     preserveUsage = true,
     prorationDate
   }: PlanChangeParams): Promise<SubscriptionWithDetails> {
-    const subscription = await prisma.subscription.findUnique({
+    const subscription = await this.prisma.subscription.findUnique({
       where: { id: subscriptionId },
       include: {
         organization: true,
@@ -217,22 +261,22 @@ export class SubscriptionService {
     });
 
     if (!subscription) {
-      throw new Error('Subscription not found');
+        throw new Error('Subscription not found');
     }
 
-    const newPlan = await prisma.pricingPlan.findUnique({
+    const newPlan = await this.prisma.pricingPlan.findUnique({
       where: { id: newPlanId }
     });
 
-    if (!newPlan) {
+   if (!newPlan) {
       throw new Error('New plan not found');
     }
 
-    // Handle usage transfer if needed
-    if (preserveUsage) {
-      await this.transferUsage(subscription, newPlan);
-    }
-
+      // Handle usage transfer if needed
+      if (preserveUsage) {
+        await this.transferUsage(subscription, newPlan);
+      }
+      
     // Update in Stripe if applicable
     if (subscription.stripeSubscriptionId) {
       const stripeParams: Stripe.SubscriptionUpdateParams = {
@@ -248,15 +292,15 @@ export class SubscriptionService {
         stripeParams.proration_date = Math.floor(prorationDate.getTime() / 1000);
       }
 
-      await stripe.subscriptions.update(
-        subscription.stripeSubscriptionId,
-        stripeParams
-      );
-    }
+      await retryOperation(() => this.stripeApi.subscriptions.update(subscription.stripeSubscriptionId, stripeParams),3,1000).catch((error) => {
+      if(config.logLevel === LogLevel.DEBUG) {
+        console.error(error);
+      }
+      return handleApiError(error);    }
 
     // Update in database
     const updatedSubscription = await prisma.subscription.update({
-      where: { id: subscriptionId },
+      where: { id: subscriptionId,},
       data: {
         planId: newPlanId,
         updatedAt: new Date()
@@ -291,6 +335,14 @@ export class SubscriptionService {
       }
     );
 
+    // Emit subscription plan updated event
+    this.eventManager.emit('subscription.updated', {
+      subscriptionId: updatedSubscription.id,
+      newPlanId: newPlanId,
+      immediateChange,
+      preserveUsage,
+    });
+
     return updatedSubscription;
   }
 
@@ -302,55 +354,108 @@ export class SubscriptionService {
     cancelImmediately = false
   ): Promise<SubscriptionWithDetails> {
     const subscription = await prisma.subscription.findUnique({
-      where: { id: subscriptionId },
-      include: {
-        organization: true,
-        plan: true
+      where: { id: subscriptionId},
+          include: {
+              organization: true,
+              plan: true,
+          }
+      });
+
+      if (!subscription) {
+        throw new Error('Subscription not found');
       }
-    });
 
-    if (!subscription) {
-      throw new Error('Subscription not found');
-    }
+      //create a background job to send the email
+        const jobData = {
+            user: subscription.organization,
+            subscription: subscription
+        };
+      
+      const subscriptionCanceledEmailJob = new BackgroundJob(
+        'send-subscription-canceled-email',
+        jobData
+      );
+      backgroundJobManager.addJob(subscriptionCanceledEmailJob);
 
-    // Cancel in Stripe if applicable
-    if (subscription.stripeSubscriptionId) {
-      if (cancelImmediately) {
-        await stripe.subscriptions.cancel(subscription.stripeSubscriptionId);
+    let stripeSubscriptionResponse: Stripe.Subscription | undefined;
+    await retryOperation(async () => { stripeSubscriptionResponse = await this.stripeApi.subscriptions.retrieve(subscription.stripeSubscriptionId); }, 3, 1000).catch(err => {
+          if(this.config.logLevel === LogLevel.DEBUG) {
+          console.error(err);
+        }
+          handleApiError(err);
+        return createErrorResponse(err);
+        });
+
+        if (cancelImmediately) {
+        await stripeApi.subscriptions.cancel(subscription.stripeSubscriptionId);
+        await prisma.subscription.delete({where: {id: subscriptionId}});
       } else {
-        await stripe.subscriptions.update(subscription.stripeSubscriptionId, {
+        await stripeApi.subscriptions.update(subscription.stripeSubscriptionId, {
+
           cancel_at_period_end: true
         });
       }
     }
 
-    // Update in database
-    const updatedSubscription = await prisma.subscription.update({
-      where: { id: subscriptionId },
-      data: {
+    if(cancelImmediately && stripeSubscriptionResponse){
+      const currentPeriodEnd = stripeSubscriptionResponse.current_period_end;
+      const status = stripeSubscriptionResponse.status;
+          const customerId = stripeSubscriptionResponse.customer as string;
+      const refundAmount = (currentPeriodEnd - Math.floor(Date.now() / 1000)) > 0 ? ((currentPeriodEnd - Math.floor(Date.now() / 1000))/ (currentPeriodEnd - subscription.currentPeriodStart.getTime()/1000) )* subscription.plan.basePrice : 0;
+      try{
+        if(status === 'active'){
+              //get the latest payment intent
+              const customer = await this.stripeApi.customers.retrieve(customerId as string);
+            if(customer && customer.invoice_settings.default_payment_method){
+                const paymentMethods = await stripeApi.paymentMethods.list({
+                  customer: customerId as string,
+                  type: 'card',
+                });
+                if(paymentMethods && paymentMethods.data && paymentMethods.data.length > 0){
+                  //get the latest charge
+                  const charges = await stripeApi.charges.list({
+                    customer: customerId,
+                    payment_method: paymentMethods.data[0].id,
+                    limit: 1,
+                  });          
+                  if(charges.data && charges.data.length > 0){
+                    //create refund
+                  
+                    stripeApi.refunds.create({
+                    amount: Math.round(refundAmount*100),
+                    payment_intent: charges.data[0].payment_intent as string,
+                   });
+                }
+              }
+            }
+        }
+    } catch (error){ 
+          handleApiError(error);
+        }
+
+
+    }
+    const updatedSubscription = await retryOperation(()=>prisma.subscription.update({
+        where: { id: subscriptionId },
         status: cancelImmediately ? 'CANCELLED' : 'ACTIVE',
-        canceledAt: new Date(),
+        canceledAt: cancelImmediately ? new Date() : null,
         cancelAtPeriodEnd: !cancelImmediately,
-        endDate: cancelImmediately ? new Date() : subscription.currentPeriodEnd
-      },
+        endDate: cancelImmediately ? new Date() : subscription.currentPeriodEnd,
+        },
       include: {
         plan: true,
-        organization: true
+        organization: true,
       }
     });
 
-    // Send notification
-    await sendSubscriptionEmail(
-      subscription.organization.email!,
-      'subscription_cancelled',
-      {
-        planName: subscription.plan.name,
-        effectiveDate: cancelImmediately ? new Date() : subscription.currentPeriodEnd
-      }
-    );
+    // Emit subscription cancelled event
+    this.eventManager.emit('subscription.canceled', {
+      subscriptionId: updatedSubscription.id,
+      cancelImmediately,
+    });
 
     return updatedSubscription;
-  }
+}
 
   /**
    * Resume cancelled subscription
@@ -374,9 +479,12 @@ export class SubscriptionService {
 
     // Resume in Stripe if applicable
     if (subscription.stripeSubscriptionId) {
-      await stripe.subscriptions.update(subscription.stripeSubscriptionId, {
+      await retryOperation(()=>this.stripeApi.subscriptions.update(subscription.stripeSubscriptionId, {
         cancel_at_period_end: false
-      });
+      }),3,1000).catch((error) => handleApiError(error));
+      if(config.logLevel === LogLevel.DEBUG) {
+        console.error(error);
+      }
     }
 
     // Update in database
@@ -447,13 +555,82 @@ export class SubscriptionService {
   /**
    * Update subscription with proration handling
    */
+  public async updateSubscription(subscriptionId: string, newPriceId: string){
+
+    const subscription = await prisma.subscription.findUnique({
+          where: { id: subscriptionId },
+      });
+
+      if (!subscription) {
+      throw new Error('Subscription not found');
+    }
+    
+      try{
+      await prisma.$transaction(async (tx) => {
+          let stripeSubscriptionResponse;
+          await retryOperation(async () => {
+          stripeSubscriptionResponse = await stripeApi.subscriptions.retrieve(subscription.stripeSubscriptionId);
+          const updateParams:Stripe.SubscriptionUpdateParams = {
+            proration_behavior: 'create_prorations',
+            items: [{
+              id: stripeSubscriptionResponse.items.data[0].id,
+              price: newPriceId
+            }],
+            default_payment_method: null
+          }
+          const updatedStripeSubscription = await stripeApi.subscriptions.update(subscription.stripeSubscriptionId, updateParams);
+          const updatedDbSubscription = await tx.subscription.update({
+            where: { id: subscriptionId },
+                  data: {
+              status: updatedStripeSubscription.status as SubscriptionStatus,
+              currentPeriodEnd: new Date(updatedStripeSubscription.current_period_end * 1000)
+            }
+          });
+          
+          },3,1000).catch((error)=>{
+          handleApiError(error);
+           if(config.logLevel === LogLevel.DEBUG) {
+            console.error(error);
+          }
+          throw error
+        });
+
+        if(stripeSubscriptionResponse){
+          const invoices = await this.stripeApi.invoices.list({
+            subscription: stripeSubscriptionResponse.id, 
+                status: 'open',
+                limit: 1
+          });
+
+           this.eventManager.emit('subscription.updated',{ 
+            subscriptionId: updatedDbSubscription.id
+          });
+
+          if(invoices.data.length > 0){
+            await stripeApi.invoices.voidInvoice(invoices.data[0].id);
+          }
+        }
+      })
+    } catch (error){
+      if(config.logLevel === LogLevel.DEBUG) {
+        console.error(error);
+      }
+      handleApiError(error);
+    }
+  }
+
+  /**
+   * Update subscription with proration handling
+   */
+
   public async updateSubscription({
     subscriptionId,
     newPlanId,
     quantity = 1,
     prorate = true
   }: {
-    subscriptionId: string;
+    
+      subscriptionId: string;
     newPlanId: string;
     quantity?: number;
     prorate?: boolean;
@@ -463,7 +640,7 @@ export class SubscriptionService {
       const subscription = await prisma.subscription.findUnique({
         where: { id: subscriptionId },
         include: {
-          plan: true,
+            plan: true,
           organization: true
         }
       });
@@ -501,15 +678,21 @@ export class SubscriptionService {
             quantity
           }]
         };
-        
-        // For downgrades without proration, schedule the update
-        if (isDowngrade && !prorate) {
+         if (isDowngrade && !prorate) {
           stripeParams.proration_behavior = 'none';
           stripeParams.trial_end = Math.floor(subscription.currentPeriodEnd.getTime() / 1000);
-        }
+        }       
         
-        await stripe.subscriptions.update(subscription.stripeSubscriptionId, stripeParams);
-      }
+        try{
+        await this.stripeApi.subscriptions.update(subscription.stripeSubscriptionId, stripeParams);
+        } catch (error) {
+                handleApiError(error);
+                if(this.config.logLevel === LogLevel.DEBUG) {
+                console.error(error);
+              }
+            return createErrorResponse(error);
+        }
+        }
       
       // Update subscription in database
       const updatedSubscription = await prisma.subscription.update({
@@ -558,11 +741,15 @@ export class SubscriptionService {
         }
       });
       
-      return { success: true, subscription: updatedSubscription as SubscriptionWithDetails };
+      return { success: true, subscription: updatedSubscription as SubscriptionWithDetails };   
     } catch (error) {
-      console.error('Error updating subscription:', error);
-      return { success: false, error: 'Failed to update subscription' };
-    }
+
+      if(config.logLevel === LogLevel.DEBUG) {
+        console.error('Error updating subscription:', error);
+      }
+      return handleApiError(error);
+    
+    
   }
   
   /**
@@ -617,18 +804,28 @@ export class SubscriptionService {
     // Calculate proration if Stripe is configured
     let proratedAmount = 0;
     if (subscription.stripeSubscriptionId) {
-      const invoice = await stripe.invoices.retrieveUpcoming({
-        customer: subscription.stripeCustomerId!,
-        subscription: subscription.stripeSubscriptionId,
-        subscription_items: [{
-          id: subscription.stripeSubscriptionItemId!,
-          price: newPlan.stripePriceId!,
-          quantity
-        }]
+        try{
+           const invoice = await stripeApi.invoices.retrieveUpcoming({
+            customer: subscription.stripeCustomerId!,
+            subscription: subscription.stripeSubscriptionId,
+            subscription_items: [{
+              id: subscription.stripeSubscriptionItemId!,
+              price: newPlan.stripePriceId!,
+              quantity
+           }]
+          });
+          proratedAmount = invoice.amount_due;
+        } catch (error) {
+             if(config.logLevel === LogLevel.DEBUG) {
+                console.error(error);
+              }
+        } catch (error) {   handleApiError(error);
+            return {type: changeType,proratedAmount: 0,effectiveDate: subscription.currentPeriodEnd, featureChanges};        }
       });
       proratedAmount = invoice.amount_due;
     }
 
+    
     // Analyze feature changes
     const featureChanges = {
       added: [] as string[],
@@ -786,9 +983,6 @@ export class SubscriptionService {
       });
     }
   }
-<<<<<<< HEAD
-
-  /**
    * Compare multiple subscription plans
    */
   static async comparePlans(planIds: string[]): Promise<PlanComparison> {
@@ -891,6 +1085,10 @@ export class SubscriptionService {
     if (usageLimit) {
       const totalUsage = await prisma.usageRecord.aggregate({
         where: {
+      } catch (error){
+          if(config.logLevel === LogLevel.DEBUG) {
+            console.error(error);
+          }
           subscriptionId,
           featureKey,
           billingPeriodStart: subscription.currentPeriodStart,
@@ -906,15 +1104,21 @@ export class SubscriptionService {
         if (usageLimit.overage && usageLimit.overagePrice) {
           const overageQuantity = totalUsage._sum.quantity - usageLimit.limit;
           const overageAmount = overageQuantity * usageLimit.overagePrice;
-
-          await stripe.invoiceItems.create({
-            customer: subscription.customer.stripeCustomerId!,
-            amount: Math.round(overageAmount * 100), // Convert to cents
-            currency: 'usd',
-            description: `Overage charge for ${featureKey}`,
-          });
+           try{
+          await stripeApi.invoiceItems.create({
+              customer: subscription.customer.stripeCustomerId!,
+              amount: Math.round(overageAmount * 100), // Convert to cents
+              currency: 'usd',
+              description: `Overage charge for ${featureKey}`,
+            });
         }
-
+      }
+      } catch (error) {
+        handleApiError(error);
+          return;
+        }
+      }
+       
         // Notify about usage limit exceeded
         await prisma.notification.create({
           data: {
@@ -961,6 +1165,9 @@ export class SubscriptionService {
     if (prorate) {
       const remainingDays = differenceInDays(
         subscription.currentPeriodEnd,
+         if(config.logLevel === LogLevel.DEBUG) {
+          console.error(error);
+        }
         new Date()
       );
       const totalDays = differenceInDays(
@@ -990,12 +1197,15 @@ export class SubscriptionService {
 
       // Create proration invoice item
       if (prorationAmount > 0) {
-        await stripe.invoiceItems.create({
+        await stripeApi.invoiceItems.create({
           customer: subscription.customer.stripeCustomerId!,
-          amount: Math.round(prorationAmount * 100),
-          currency: 'usd',
-          description: `Proration charge for upgrading to ${newPlan.name}`,
-        });
+            amount: Math.round(prorationAmount * 100),
+                currency: 'usd',
+                description: `Proration charge for upgrading to ${newPlan.name}`,
+         });
+      }} catch (error){
+          return handleApiError(error);
+        }
       }
     }
 
@@ -1010,10 +1220,14 @@ export class SubscriptionService {
 
     // Update Stripe subscription if exists
     if (subscription.customer.stripeCustomerId && newPlan.stripePriceId) {
-      await stripe.subscriptions.update(subscription.customer.stripeCustomerId, {
-        items: [{ price: newPlan.stripePriceId }],
-        proration_behavior: prorate ? 'create_prorations' : 'none',
-      });
+      await stripeApi.subscriptions.update(subscription.customer.stripeCustomerId, {
+          items: [{ price: newPlan.stripePriceId }],
+          proration_behavior: prorate ? 'create_prorations' : 'none',
+        });
+    }
+    } catch (error) {
+      handleApiError(error);
+    }
     }
   }
 
@@ -1057,9 +1271,17 @@ export class SubscriptionService {
         });
 
         if (subscription.customer.stripeCustomerId) {
-          await stripe.subscriptions.update(subscription.customer.stripeCustomerId, {
-            cancel_at_period_end: true,
-          });
+          try{
+          await stripeApi.subscriptions.update(subscription.customer.stripeCustomerId, {
+              cancel_at_period_end: true,
+            });
+            } catch (error) {
+              handleApiError(error);
+              if(config.logLevel === LogLevel.DEBUG) {
+                console.error(error);
+              }
+              return;
+            }
         }
         break;
 
@@ -1077,12 +1299,20 @@ export class SubscriptionService {
         });
 
         if (subscription.customer.stripeCustomerId) {
-          await stripe.subscriptions.update(subscription.customer.stripeCustomerId, {
-            pause_collection: {
-              behavior: 'void',
-              resumes_at: Math.floor(resumesAt.getTime() / 1000),
-            },
-          });
+          try{
+          await stripeApi.subscriptions.update(subscription.customer.stripeCustomerId, {
+              pause_collection: {
+                behavior: 'void',
+                resumes_at: Math.floor(resumesAt.getTime() / 1000),
+              },
+            });
+          } catch (error) {
+            handleApiError(error);
+            if(config.logLevel === LogLevel.DEBUG) {
+              console.error(error);
+            }
+                return handleApiError(error);
+            }
         }
         break;
 
@@ -1097,16 +1327,23 @@ export class SubscriptionService {
         });
 
         if (subscription.customer.stripeCustomerId) {
-          await stripe.subscriptions.update(subscription.customer.stripeCustomerId, {
-            pause_collection: '',
-          });
+          try{
+          await stripeApi.subscriptions.update(subscription.customer.stripeCustomerId, {
+              pause_collection: '',
+            });
+            } catch (error) {
+              handleApiError(error);
+              if(config.logLevel === LogLevel.DEBUG) {
+                console.error(error);
+              }
+                return;
+            }
         }
         break;
 
       default:
         throw new Error('Invalid subscription action');
     }
-  }
-=======
->>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
+}
+}
 }

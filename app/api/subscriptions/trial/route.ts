@@ -1,10 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createTrialSubscription, extendTrial } from "@/lib/trials";
 import { auth } from "@/lib/auth";
-import { createEvent, EventSeverity } from "@/lib/events";
-import { prisma } from "@/lib/prisma";
+import { createEvent, EventManager, EventSeverity } from "@/lib/events";
+import { PrismaClient } from "@prisma/client";
 import { z } from "zod";
+import { IPrisma } from "@/lib/prisma";
+import { IStripe } from "@/lib/stripe";
+import { Stripe } from "stripe";
+import { InvoiceService, IInvoiceService } from "@/lib/services/invoice-service";
+import { UsageService, IUsageService } from "@/lib/services/usage-service";
+import { SubscriptionService } from "@/lib/services/subscription-service";
+import { BackgroundJobManager, IBackgroundJobManager } from "@/lib/background-jobs/background-job-manager";
+import { IBackgroundJob, BackgroundJob } from "@/lib/background-jobs/background-job";
+import { Config, IConfig } from "@/lib/config";
 
+
+const prisma: IPrisma = new PrismaClient();
 // Validation schema for creating a trial
 const createTrialSchema = z.object({
   organizationId: z.string().min(1, "Organization ID is required"),
@@ -21,6 +32,14 @@ const extendTrialSchema = z.object({
 // POST handler to create a trial subscription
 export async function POST(req: NextRequest) {
   try {
+    const stripe: IStripe = new Stripe(Config.getConfig().stripe.secretKey, {
+      apiVersion: "2023-10-16",
+    });
+    const invoiceService: IInvoiceService = new InvoiceService(prisma, stripe);
+    const usageService: IUsageService = new UsageService(prisma);
+    const backgroundJobManager: IBackgroundJobManager = new BackgroundJobManager();
+    const eventManager: EventManager = new EventManager();
+    const config: IConfig = Config.getConfig();
     // Authenticate user
     const session = await auth();
     if (!session?.user) {
@@ -58,7 +77,9 @@ export async function POST(req: NextRequest) {
     }
     
     // Create trial subscription
-    const subscription = await createTrialSubscription(validatedData.data);
+    const subscriptionService: SubscriptionService = new SubscriptionService(invoiceService, usageService, prisma, stripe, eventManager, backgroundJobManager, BackgroundJob, config);
+
+    const subscription = await createTrialSubscription(validatedData.data, subscriptionService);
     
     return NextResponse.json(subscription, { status: 201 });
   } catch (error: any) {
@@ -84,6 +105,13 @@ export async function POST(req: NextRequest) {
 // PATCH handler to extend a trial
 export async function PATCH(req: NextRequest) {
   try {
+    const stripe: IStripe = new Stripe(Config.getConfig().stripe.secretKey, {
+      apiVersion: "2023-10-16",
+    });
+    const invoiceService: IInvoiceService = new InvoiceService(prisma, stripe);
+    const usageService: IUsageService = new UsageService(prisma);
+    const backgroundJobManager: IBackgroundJobManager = new BackgroundJobManager();
+    const eventManager: EventManager = new EventManager();
     // Authenticate user
     const session = await auth();
     if (!session?.user) {
@@ -108,7 +136,8 @@ export async function PATCH(req: NextRequest) {
     }
     
     // Extend the trial
-    const subscription = await extendTrial(validatedData.data);
+    const subscriptionService: SubscriptionService = new SubscriptionService(invoiceService, usageService, prisma, stripe, eventManager, backgroundJobManager, BackgroundJob, Config.getConfig());
+    const subscription = await extendTrial(validatedData.data, subscriptionService);
     
     return NextResponse.json(subscription);
   } catch (error: any) {

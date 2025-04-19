@@ -7,6 +7,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Loader2, AlertTriangle, CheckCircle } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 
+import { retryOperation } from '@/lib/utils/retry';
 // Initialize Stripe outside of component to avoid recreating on each render
 const stripePromise = loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY!);
 
@@ -23,6 +24,7 @@ function PaymentForm({ clientSecret, onSuccess, onError }: PaymentFormProps) {
   const [isProcessing, setIsProcessing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [status, setStatus] = useState<'idle' | 'processing' | 'success' | 'error'>('idle');
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -71,14 +73,28 @@ function PaymentForm({ clientSecret, onSuccess, onError }: PaymentFormProps) {
       return;
     }
 
-    setIsProcessing(true);
-    setStatus('processing');
+    setIsSubmitting(true);
+    setStatus('processing')
+    setMessage(null)
 
-    const { error, paymentIntent } = await stripe.confirmPayment({
-      elements,
-      confirmParams: {
-        // Return URL where the customer should be redirected after the PaymentIntent is confirmed.
-        return_url: `${window.location.origin}/payment/confirmation`,
+    const paymentOperation = async () => {
+      const { error, paymentIntent } = await stripe.confirmPayment({
+        elements,
+        confirmParams: {
+          // Return URL where the customer should be redirected after the PaymentIntent is confirmed.
+          return_url: `${window.location.origin}/payment/confirmation`,
+        },
+      });
+      return { error, paymentIntent }
+    };
+
+    const { error, paymentIntent } = await retryOperation(paymentOperation, 3, 1000)
+
+    setIsProcessing(false);
+    setIsSubmitting(false);
+
+    if (error) {
+      if (error.message.startsWith('Network error')) {
       },
     });
 
@@ -93,16 +109,34 @@ function PaymentForm({ clientSecret, onSuccess, onError }: PaymentFormProps) {
         title: "Payment failed",
         description: error.message || "An unexpected error occurred.",
         variant: "destructive",
-      });
+      })
+      setMessage(error.message || "An unexpected error occurred.");
+      setStatus('error');
+      if (onError) onError(error);
     } else if (paymentIntent && paymentIntent.status === "succeeded") {
       setMessage("Payment succeeded!");
       setStatus('success');
-      if (onSuccess) onSuccess(paymentIntent);
+
+      setTimeout(() => {
+        setMessage(null);
+        setStatus('idle')
+        if(elements){
+          elements.getElement('payment')!.clear();
+        }
+      }, 5000);
+
       toast({
         title: "Payment successful",
         description: "Your payment has been processed successfully.",
       });
+
+      if (onSuccess) onSuccess(paymentIntent);
+      
+    } else {
+      setMessage('An unexpected error occurred.');
+      setStatus('error');
     }
+
 
     setIsProcessing(false);
   };
@@ -125,7 +159,7 @@ function PaymentForm({ clientSecret, onSuccess, onError }: PaymentFormProps) {
       
       <Button 
         type="submit" 
-        disabled={isProcessing || !stripe || !elements} 
+        disabled={isSubmitting || isProcessing || !stripe || !elements} 
         className="w-full mt-6"
       >
         {isProcessing ? (

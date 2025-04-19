@@ -1,10 +1,21 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { prisma } from '@/lib/prisma';
-import { cancelSubscription } from '@/lib/services/subscription-service';
+import { PrismaClient } from '@prisma/client';
+import { SubscriptionService } from '@/lib/services/subscription-service';
 import { z } from 'zod';
+import { InvoiceService } from '@/lib/services/invoice-service';
+import { UsageService } from '@/lib/services/usage-service';
+import { Stripe } from 'stripe';
+import { EventManager } from '@/lib/events/events';
+import { BackgroundJobManager } from '@/lib/background-jobs/background-job-manager';
+import { BackgroundJob } from '@/lib/background-jobs/background-job';
+import { Config } from '@/lib/config';
 
+const prisma = new PrismaClient();
+const stripe = new Stripe(Config.getConfig().stripe.secretKey as string, { apiVersion: '2023-10-16' });
+const eventManager = new EventManager();
+const backgroundJobManager = new BackgroundJobManager();
 // Validation schema for request
 const cancelSubscriptionSchema = z.object({
   subscriptionId: z.string(),
@@ -13,6 +24,19 @@ const cancelSubscriptionSchema = z.object({
 });
 
 export async function POST(request: Request) {
+  const config = Config.getConfig();
+  const invoiceService = new InvoiceService(prisma);
+  const usageService = new UsageService(prisma);
+  const subscriptionService = new SubscriptionService(
+    invoiceService,
+    usageService,
+    prisma,
+    stripe,
+    eventManager,
+    backgroundJobManager,
+    BackgroundJob,
+    config
+  );
   try {
     const session = await getServerSession(authOptions);
     if (!session?.user) {
@@ -57,10 +81,7 @@ export async function POST(request: Request) {
     }
 
     // Use the subscription service to cancel the subscription
-    const updatedSubscription = await cancelSubscription(
-      subscriptionId, 
-      cancelImmediately
-    );
+    const updatedSubscription = await subscriptionService.cancelSubscription(subscriptionId, cancelImmediately);
 
     return NextResponse.json(updatedSubscription);
   } catch (error: any) {

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { createEvent, EventSeverity } from "@/lib/events";
+import { rateLimit } from "@/lib/utils/rate-limit";
 
 /**
  * Update phone number for the authenticated user
@@ -9,6 +10,13 @@ import { createEvent, EventSeverity } from "@/lib/events";
 export async function POST(req: NextRequest) {
   try {
     // Get authenticated user
+    const { success } = await rateLimit(
+      `user-phone-${(await auth())?.user?.id || "unauthenticated"}`,
+    );
+    if (!success) {
+      return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
+    }
+
     const session = await auth();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -99,6 +107,13 @@ export async function POST(req: NextRequest) {
  */
 export async function DELETE() {
   try {
+      const { success } = await rateLimit(
+        `user-phone-${(await auth())?.user?.id || "unauthenticated"}`,
+      );
+      if (!success) {
+        return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
+      }
+    
     // Get authenticated user
     const session = await auth();
     if (!session?.user?.id) {

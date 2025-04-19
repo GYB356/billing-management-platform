@@ -1,10 +1,21 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { prisma } from '@/lib/prisma';
+import { PrismaClient } from '@prisma/client';
+import { IPrisma } from '@/lib/services/subscription-service';
+import { InvoiceService, UsageService, EventManager, BackgroundJobManager, BackgroundJob, Config, Stripe } from '@/lib/index';
+
+const prisma: IPrisma = new PrismaClient();
+const invoiceService = new InvoiceService();
+const usageService = new UsageService();
+const eventManager = new EventManager();
+const backgroundJobManager = new BackgroundJobManager();
+const config = Config.getConfig();
+const stripe = new Stripe(config.stripe.secretKey);
 
 export async function GET() {
   try {
+    
     const session = await getServerSession(authOptions);
     if (!session) {
       return NextResponse.json(

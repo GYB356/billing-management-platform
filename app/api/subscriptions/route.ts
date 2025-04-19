@@ -1,356 +1,1208 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
-import { prisma } from '@/lib/prisma';
-import { stripe } from '@/lib/stripe';
-import { z } from 'zod';
-<<<<<<< HEAD
-import { SubscriptionService } from '@/lib/services/subscription-service';
-=======
->>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
 
-// Validation schemas
-const createSubscriptionSchema = z.object({
-  planId: z.string(),
-  organizationId: z.string(),
-  paymentMethodId: z.string().optional(),
-  trialDays: z.number().optional(),
-});
 
-const updateSubscriptionSchema = z.object({
-  subscriptionId: z.string(),
-  planId: z.string().optional(),
-  quantity: z.number().optional(),
-  cancelAtPeriodEnd: z.boolean().optional(),
-});
+import { handleApiError, createErrorResponse } from '@/lib/utils/error-handling';
+import Stripe from 'stripe';
+import {
+  Subscription,
+  PricingPlan,
+  Organization,
+  PlanFeature
+} from '@prisma/client';
+import { sendSubscriptionEmail } from '@/lib/email';
+import { InvoiceService } from '@/lib/services/invoice-service';
+import { UsageService } from '@/lib/services/usage-service';
+import { PrismaClient } from '@prisma/client';
+import { retryOperation } from '../utils/retry';
+import { differenceInDays } from 'date-fns';
+import { IInvoiceService } from '@/lib/services/invoice-service';
+import { IUsageService } from '@/lib/services/usage-service';
+import { IPrisma } from '@/lib/prisma';
+import { IStripe } from '@/lib/stripe';
+import { EventManager, IEventManager } from '@/lib/events';
+import { BackgroundJobManager, IBackgroundJobManager, IBackgroundJob } from '@/lib/background-jobs';
+import { Config, IConfig } from '@/lib/config';
 
-<<<<<<< HEAD
-const compareSchema = z.object({
-  planIds: z.array(z.string()),
-});
+export interface SubscriptionParams {
+  customerId: string;
+  organizationId: string;
+  planId: string;
+  priceId: string;
+  quantity?: number;
+  trialDays?: number;
+  paymentMethodId?: string;
+  metadata?: Record<string, any>;
+  couponId?: string;
+  taxRateIds?: string[];
+}
 
-const usageSchema = z.object({
-  subscriptionId: z.string(),
-  featureKey: z.string(),
-  quantity: z.number(),
-  timestamp: z.string().optional(),
-});
+export interface PlanChangeParams {
+  subscriptionId: string;
+  newPlanId: string;
+  immediateChange?: boolean;
+  prorationDate?: Date;
+  preserveUsage?: boolean;
+  prorationDate?: Date;
+}
 
-const changePlanSchema = z.object({
-  subscriptionId: z.string(),
-  newPlanId: z.string(),
-  prorate: z.boolean().optional(),
-});
+export interface SubscriptionWithDetails extends Subscription {
+  plan: PricingPlan;
+  organization: Organization;
+  planFeatures?: PlanFeature[];
+}
 
-const updateStatusSchema = z.object({
-  subscriptionId: z.string(),
-  action: z.enum(['activate', 'cancel', 'pause', 'resume']),
-});
+export interface PlanComparison {
+  plans: Array<{
+    id: string;
+    name: string;
+    price: number;
+    currency: string;
+    interval: string;
+    features: Array<{
+      name: string;
+      included: boolean;
+      value?: string;
+    }>;
+    usageLimits: Array<{
+      featureKey: string;
+      limit: number;
+      interval: string;
+      overage: boolean;
+      overagePrice?: number;
+    }>;
+  }>;
+  differences: Array<{
+    featureName: string;
+    values: Record<string, string | boolean | number | null>;
+  }>;
+}
+export class SubscriptionService {
+  private readonly invoiceService: IInvoiceService;
+  private readonly usageService: IUsageService;
+  private readonly prisma: IPrisma;
+  private readonly stripe: IStripe;
+  private readonly eventManager: IEventManager;
+  private readonly backgroundJobManager: IBackgroundJobManager;
+  private readonly config: IConfig;
 
-=======
->>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
-export async function POST(req: NextRequest) {
-  try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+  constructor(invoiceService: IInvoiceService, usageService: IUsageService, prisma: IPrisma, stripe: IStripe, eventManager: IEventManager, backgroundJobManager: IBackgroundJobManager, config: IConfig) {
+    this.invoiceService = invoiceService;
+    this.usageService = usageService;
+    this.prisma = prisma;
+    this.stripe = stripe;
+    this.eventManager = eventManager;
+    this.backgroundJobManager = backgroundJobManager;
+    this.config = config
+  }
 
-    const body = await req.json();
-    const validation = createSubscriptionSchema.safeParse(body);
-    
-    if (!validation.success) {
-      return NextResponse.json({ error: validation.error }, { status: 400 });
-    }
+  /**
+   * Creates a new subscription
+   */
+  public async createSubscription(params: SubscriptionParams): Promise<SubscriptionWithDetails> {
+    const { 
+      customerId,
+      organizationId,
+      planId,
+      priceId,
+      quantity = 1,
+      trialDays,
+      paymentMethodId,
+      metadata = {},
+      couponId,
+      taxRateIds = []
+    } = params;
 
-    const { planId, organizationId, paymentMethodId, trialDays } = validation.data;
-
-    // Get organization and plan
-    const [organization, plan] = await Promise.all([
-      prisma.organization.findUnique({ where: { id: organizationId } }),
-      prisma.plan.findUnique({ where: { id: planId } })
-    ]);
-
-    if (!organization || !plan) {
-      return NextResponse.json(
-        { error: 'Organization or plan not found' },
-        { status: 404 }
-      );
-    }
-
-    // Create or get Stripe customer
-    let stripeCustomerId = organization.stripeCustomerId;
-    if (!stripeCustomerId) {
-      const customer = await stripe.customers.create({
-        email: organization.email,
-        metadata: { organizationId }
-      });
-      stripeCustomerId = customer.id;
-
-      await prisma.organization.update({
-        where: { id: organizationId },
-        data: { stripeCustomerId }
-      });
-    }
-
-    // Create Stripe subscription
-    const stripeSubscription = await stripe.subscriptions.create({
-      customer: stripeCustomerId,
-      items: [{ price: plan.stripePriceId }],
-      payment_behavior: 'default_incomplete',
-      payment_settings: { save_default_payment_method: 'on_subscription' },
-      trial_period_days: trialDays,
-      expand: ['latest_invoice.payment_intent'],
+    // Get the organization
+    const organization = await this.prisma.organization.findUnique({
+      where: { id: organizationId }
     });
+
+    if (!organization) {
+      throw new Error('Organization not found') ;
+    }
+
+    // Get the plan
+    const plan = await this.prisma.pricingPlan.findUnique({
+      where: { id: planId }
+    });
+
+    if (!plan) {
+      throw new Error('Plan not found');
+    }
+
+    // Create Stripe subscription if Stripe is enabled
+    let stripeSubscription;
+    if (organization.stripeCustomerId) {
+      const stripeSubscriptionParams: Stripe.SubscriptionCreateParams = {
+        
+        customer: organization.stripeCustomerId,
+        items: [{ price: priceId, quantity }],
+        expand: ['latest_invoice.payment_intent'],
+        metadata: {
+          organizationId,
+          planId,
+          ...metadata
+        }
+      };
+
+      // Add trial if specified
+      if (trialDays) {
+        stripeSubscriptionParams.trial_period_days = trialDays;
+      }
+
+      // Add payment method if specified
+      if (paymentMethodId) {
+        stripeSubscriptionParams.default_payment_method = paymentMethodId;
+      }
+
+      // Add coupon if specified
+      if (couponId) {
+        stripeSubscriptionParams.coupon = couponId;
+      }
+
+      // Add tax rates if specified
+      if (taxRateIds.length > 0) {
+        stripeSubscriptionParams.default_tax_rates = taxRateIds;
+      }
+
+      try {
+        stripeSubscription = await this.stripe.subscriptions.create(stripeSubscriptionParams);
+      } catch (error) {
+        throw handleApiError(error);
+      }
 
     // Create subscription in database
     const subscription = await prisma.subscription.create({
       data: {
         organizationId,
         planId,
-        status: stripeSubscription.status,
-        stripeSubscriptionId: stripeSubscription.id,
-        currentPeriodStart: new Date(stripeSubscription.current_period_start * 1000),
-        currentPeriodEnd: new Date(stripeSubscription.current_period_end * 1000),
-        cancelAtPeriodEnd: stripeSubscription.cancel_at_period_end,
-        trialEndsAt: stripeSubscription.trial_end
-          ? new Date(stripeSubscription.trial_end * 1000)
+        status: stripeSubscription ? 'ACTIVE' : 'PENDING',
+        quantity,
+        currentPeriodStart: stripeSubscription 
+          ? new Date(stripeSubscription.current_period_start * 1000) 
+          : new Date(),
+        currentPeriodEnd: stripeSubscription
+          ? new Date(stripeSubscription.current_period_end * 1000)
+          : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        stripeSubscriptionId: stripeSubscription?.id,
+        trialEndsAt: stripeSubscription?.trial_end 
+          ? new Date(stripeSubscription.trial_end * 1000) 
           : null,
+        metadata
       },
+      include: {
+        plan: true,
+        organization: true
+      }
     });
 
-    return NextResponse.json({
-      subscription,
-      clientSecret: (stripeSubscription.latest_invoice as any)?.payment_intent?.client_secret,
-    });
-  } catch (error) {
-    console.error('Error creating subscription:', error);
-    return NextResponse.json(
-      { error: 'Failed to create subscription' },
-      { status: 500 }
+    // Send email notification
+    await sendSubscriptionEmail(
+      organization.email!,
+      'subscription_created',
+      {
+        planName: plan.name,
+        startDate: subscription.currentPeriodStart,
+        endDate: subscription.currentPeriodEnd,
+        price: plan.basePrice / 100, // Convert from cents to dollars
+        currency: plan.currency
+      }
     );
-  }
-}
 
-export async function PUT(req: NextRequest) {
-  try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const body = await req.json();
-    const validation = updateSubscriptionSchema.safeParse(body);
     
-    if (!validation.success) {
-      return NextResponse.json({ error: validation.error }, { status: 400 });
-    }
+    stripeSubscription = await retryOperation(() => stripeApi.subscriptions.create(stripeSubscriptionParams), 3, 1000);
 
-    const { subscriptionId, planId, quantity, cancelAtPeriodEnd } = validation.data;
+    return subscription;
+  }
 
+  /**
+   * Update subscription plan
+   */
+  public async changePlan({
+    subscriptionId,
+    newPlanId,
+    immediateChange = false,
+    preserveUsage = true,
+    prorationDate
+  }: PlanChangeParams): Promise<SubscriptionWithDetails> {
     const subscription = await prisma.subscription.findUnique({
       where: { id: subscriptionId },
-      include: { organization: true }
+      include: {
+        organization: true,
+        plan: true
+      }
     });
 
     if (!subscription) {
-      return NextResponse.json(
-        { error: 'Subscription not found' },
-        { status: 404 }
-      );
+        throw new Error('Subscription not found');
     }
 
-    if (planId) {
-      const plan = await prisma.plan.findUnique({ where: { id: planId } });
-      if (!plan) {
-        return NextResponse.json(
-          { error: 'Plan not found' },
-          { status: 404 }
-        );
+    const newPlan = await prisma.pricingPlan.findUnique({
+      where: { id: newPlanId }
+    });
+
+   if (!newPlan) {
+      throw new Error('New plan not found');
+    }
+
+    // Handle usage transfer if needed
+    if (preserveUsage) {
+      await this.transferUsage(subscription, newPlan);
+    }
+
+    // Update in Stripe if applicable
+    if (subscription.stripeSubscriptionId) {
+      const stripeParams: Stripe.SubscriptionUpdateParams = {
+        proration_behavior: immediateChange ? 'always_invoice' : 'create_prorations',
+        items: [{
+          id: subscription.stripeSubscriptionId,
+          price: newPlan.stripePriceId!,
+          quantity: subscription.quantity
+        }]
+      };
+
+      if (prorationDate) {
+        stripeParams.proration_date = Math.floor(prorationDate.getTime() / 1000);
       }
 
-      await stripe.subscriptions.update(subscription.stripeSubscriptionId!, {
-        items: [{ price: plan.stripePriceId }],
-        proration_behavior: 'create_prorations',
-      });
-    }
+    try{   
+    await retryOperation(() => stripeApi.subscriptions.update(subscription.stripeSubscriptionId, stripeParams),3,1000);
+    
+    }catch (error){
+      return handleApiError(error);    }
 
-    if (typeof quantity === 'number') {
-      await stripe.subscriptions.update(subscription.stripeSubscriptionId!, {
-        quantity,
-      });
-    }
-
-    if (typeof cancelAtPeriodEnd === 'boolean') {
-      await stripe.subscriptions.update(subscription.stripeSubscriptionId!, {
-        cancel_at_period_end: cancelAtPeriodEnd,
-      });
-    }
-
+    // Update in database
     const updatedSubscription = await prisma.subscription.update({
       where: { id: subscriptionId },
       data: {
-        planId: planId || undefined,
-        quantity: quantity || undefined,
-        cancelAtPeriodEnd: cancelAtPeriodEnd || undefined,
+        planId: newPlanId,
+        updatedAt: new Date()
       },
-    });
-
-    return NextResponse.json(updatedSubscription);
-  } catch (error) {
-    console.error('Error updating subscription:', error);
-    return NextResponse.json(
-      { error: 'Failed to update subscription' },
-      { status: 500 }
-    );
-  }
-}
-
-<<<<<<< HEAD
-export async function GET(request: Request) {
-  try {
-    const session = await getServerSession(authOptions);
-    if (!session) {
-      return new NextResponse('Unauthorized', { status: 401 });
-    }
-
-    const { searchParams } = new URL(request.url);
-    const action = searchParams.get('action');
-
-    switch (action) {
-      case 'compare': {
-        const planIds = searchParams.getAll('planId');
-        const result = await SubscriptionService.comparePlans(planIds);
-        return NextResponse.json(result);
-      }
-
-      default:
-        return new NextResponse('Invalid action', { status: 400 });
-    }
-  } catch (error) {
-    console.error('Subscription API error:', error);
-    return new NextResponse('Internal Server Error', { status: 500 });
-  }
-}
-
-export async function POST(request: Request) {
-  try {
-    const session = await getServerSession(authOptions);
-    if (!session) {
-      return new NextResponse('Unauthorized', { status: 401 });
-    }
-
-    const body = await request.json();
-    const { action } = body;
-
-    switch (action) {
-      case 'recordUsage': {
-        const data = usageSchema.parse(body);
-        await SubscriptionService.recordUsage(
-          data.subscriptionId,
-          data.featureKey,
-          data.quantity,
-          data.timestamp ? new Date(data.timestamp) : undefined
-        );
-        return new NextResponse('Usage recorded', { status: 200 });
-      }
-
-      case 'changePlan': {
-        const data = changePlanSchema.parse(body);
-        await SubscriptionService.changePlan(
-          data.subscriptionId,
-          data.newPlanId,
-          data.prorate
-        );
-        return new NextResponse('Plan changed successfully', { status: 200 });
-      }
-
-      case 'updateStatus': {
-        const data = updateStatusSchema.parse(body);
-        await SubscriptionService.updateSubscriptionStatus(
-          data.subscriptionId,
-          data.action
-        );
-        return new NextResponse('Status updated successfully', { status: 200 });
-      }
-
-      default:
-        return new NextResponse('Invalid action', { status: 400 });
-    }
-  } catch (error) {
-    console.error('Subscription API error:', error);
-    if (error instanceof z.ZodError) {
-      return NextResponse.json({ errors: error.errors }, { status: 400 });
-    }
-    return new NextResponse('Internal Server Error', { status: 500 });
-=======
-export async function GET(req: NextRequest) {
-  try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const { searchParams } = new URL(req.url);
-    const organizationId = searchParams.get('organizationId');
-
-    if (!organizationId) {
-      return NextResponse.json(
-        { error: 'Organization ID is required' },
-        { status: 400 }
-      );
-    }
-
-    const subscriptions = await prisma.subscription.findMany({
-      where: { organizationId },
       include: {
         plan: true,
-        organization: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
+        organization: true
+      }
+    });
+
+    // Create change event
+    await createEvent({
+      type: 'SUBSCRIPTION_PLAN_CHANGED',
+      resourceType: 'SUBSCRIPTION',
+      resourceId: subscriptionId,
+      metadata: {
+        oldPlanId: subscription.planId,
+        newPlanId,
+        immediateChange,
+        preserveUsage
+      }
+    });
+
+    // Send notification
+    await sendSubscriptionEmail(
+      subscription.organization.email!,
+      'plan_changed',
+      {
+        oldPlan: subscription.plan.name,
+        newPlan: newPlan.name,
+        effectiveDate: immediateChange ? new Date() : subscription.currentPeriodEnd
+      }
+    );
+
+    return updatedSubscription;
+  }
+
+  /**
+   * Cancel subscription
+   */
+  public async cancelSubscription(
+    subscriptionId: string,
+    cancelImmediately = false
+  ): Promise<SubscriptionWithDetails> {
+    const subscription = await prisma.subscription.findUnique({
+      where: { id: subscriptionId },
+      include: {
+        organization: true,
+        plan: true
+      }
+    });
+
+     if (!subscription) {
+        throw new Error('Subscription not found');
+    }
+    
+    let stripeSubscriptionResponse:Stripe.Subscription | undefined;
+    await retryOperation(async () => {
+        stripeSubscriptionResponse = await stripeApi.subscriptions.retrieve(subscription.stripeSubscriptionId);
+    
+    },3,1000).catch(err=>{
+       handleApiError(err);
+       return createErrorResponse(err)
+    });
+
+      if (cancelImmediately) {
+        await stripeApi.subscriptions.cancel(subscription.stripeSubscriptionId);
+
+      } else {
+        await stripeApi.subscriptions.update(subscription.stripeSubscriptionId, {
+
+          cancel_at_period_end: true
+        });
+      }
+    }
+
+    if(cancelImmediately && stripeSubscriptionResponse){
+      const currentPeriodEnd = stripeSubscriptionResponse.current_period_end;
+      const status = stripeSubscriptionResponse.status;
+      const customerId = stripeSubscriptionResponse.customer as string;
+      const refundAmount = (currentPeriodEnd - Math.floor(Date.now() / 1000)) > 0 ? ((currentPeriodEnd - Math.floor(Date.now() / 1000))/ (currentPeriodEnd - subscription.currentPeriodStart.getTime()/1000) )* subscription.plan.basePrice : 0;
+      try{
+          if(status === 'active'){
+            //get the latest payment intent
+            const customer = await stripeApi.customers.retrieve(customerId as string);
+            if(customer && customer.invoice_settings.default_payment_method){
+                const paymentMethods = await stripeApi.paymentMethods.list({
+                  customer: customerId as string,
+                  type: 'card',
+                });
+                if(paymentMethods && paymentMethods.data && paymentMethods.data.length > 0){
+                  //get the latest charge
+                  const charges = await stripeApi.charges.list({
+                    customer: customerId as string,
+                    payment_method: paymentMethods.data[0].id,
+                    limit: 1,
+                  });          
+                  if(charges.data && charges.data.length > 0){
+                    //create refund
+                  
+                    stripeApi.refunds.create({
+                    amount: Math.round(refundAmount*100),
+                    payment_intent: charges.data[0].payment_intent as string,
+                   });
+                }
+              }
+            }
+        }
+    } catch (error){
+      handleApiError(error);
+    }
+
+    }
+    const updatedSubscription = await retryOperation(()=>prisma.subscription.update({
+        where: { id: subscriptionId },
+        status: cancelImmediately ? 'CANCELLED' : 'ACTIVE',
+        canceledAt: cancelImmediately ? new Date() : null,
+        cancelAtPeriodEnd: !cancelImmediately,
+        endDate: cancelImmediately ? new Date() : subscription.currentPeriodEnd,
+        },
+      include: {
+        plan: true,
+        organization: true,
+      }
+    });
+
+    // Send notification
+    await sendSubscriptionEmail(
+      subscription.organization.email!,
+      'subscription_cancelled',
+      {
+        planName: subscription.plan.name,
+        effectiveDate: cancelImmediately ? new Date() : subscription.currentPeriodEnd
+      }
+    );
+
+    return updatedSubscription;
+}
+
+  /**
+   * Resume cancelled subscription
+   */
+  public async resumeSubscription(subscriptionId: string): Promise<SubscriptionWithDetails> {
+    const subscription = await prisma.subscription.findUnique({
+      where: { id: subscriptionId },
+      include: {
+        organization: true,
+        plan: true
+      }
+    });
+
+    if (!subscription) {
+      throw new Error('Subscription not found');
+    }
+
+    if (!subscription.cancelAtPeriodEnd) {
+      throw new Error('Subscription is not scheduled for cancellation');
+    }
+
+    // Resume in Stripe if applicable
+    if (subscription.stripeSubscriptionId) {
+      try{
+       await retryOperation(()=>stripeApi.subscriptions.update(subscription.stripeSubscriptionId, {
+        cancel_at_period_end: false
+      }),3,1000);
+      } catch (error) {
+      });
+    }
+
+    // Update in database
+    const updatedSubscription = await prisma.subscription.update({
+      where: { id: subscriptionId },
+      data: {
+        cancelAtPeriodEnd: false,
+        canceledAt: null,
+        endDate: null
+      },
+      include: {
+        plan: true,
+        organization: true
+      }
+    });
+
+    // Send notification
+    await sendSubscriptionEmail(
+      subscription.organization.email!,
+      'subscription_resumed',
+      {
+        planName: subscription.plan.name
+      }
+    );
+
+    return updatedSubscription;
+  }
+
+  /**
+   * Transfer usage data between plans
+   */
+  private async transferUsage(
+    oldSubscription: SubscriptionWithDetails,
+    newPlan: PricingPlan
+  ): Promise<void> {
+    // Get current usage for all features
+    const usage = await this.usageService.getSubscriptionUsageSummary(
+      oldSubscription.id,
+      oldSubscription.currentPeriodStart!,
+      new Date()
+    );
+
+    // Transfer usage to new plan where feature mappings exist
+    for (const featureUsage of usage.features) {
+      const oldFeature = featureUsage.feature;
+      const newFeature = await prisma.planFeature.findFirst({
+        where: {
+          planId: newPlan.id,
+          code: oldFeature.code // Assuming features have a code that maps between plans
+        }
+      });
+
+      if (newFeature) {
+        await this.usageService.recordUsage({
+          subscriptionId: oldSubscription.id,
+          featureId: newFeature.id,
+          quantity: featureUsage.totalUsage,
+          timestamp: new Date(),
+          metadata: {
+            transferred: true,
+            fromFeatureId: oldFeature.id
+          }
+        });
+      }
+    }
+  }
+
+  /**
+   * Update subscription with proration handling
+   */
+  public async updateSubscription({
+    subscriptionId,
+    newPlanId,
+    quantity = 1,
+    prorate = true
+  }: {
+    
+      subscriptionId: string;
+    newPlanId: string;
+    quantity?: number;
+    prorate?: boolean;
+  }): Promise<{ success: boolean; subscription?: SubscriptionWithDetails; error?: string }> {
+    try {
+      // Get current subscription details
+      const subscription = await prisma.subscription.findUnique({
+        where: { id: subscriptionId },
+        include: {
+            plan: true,
+          organization: true
+        }
+      });
+
+      if (!subscription) {
+        return { success: false, error: 'Subscription not found' };
+      }
+
+      // Get new plan details
+      const newPlan = await prisma.pricingPlan.findUnique({
+        where: { id: newPlanId }
+      });
+
+      if (!newPlan) {
+        return { success: false, error: 'New plan not found' };
+      }
+
+      // Calculate impact of the change
+      const impact = await this.calculatePlanChangeImpact(subscriptionId, newPlanId, quantity);
+      
+      // Determine if this is an upgrade, downgrade, or crossgrade
+      const isUpgrade = impact.type === 'upgrade';
+      const isDowngrade = impact.type === 'downgrade';
+      
+      // Handle immediate change or schedule for next billing period
+      const effectiveDate = prorate ? new Date() : subscription.currentPeriodEnd;
+      
+      // If using Stripe, update the subscription there
+      if (subscription.stripeSubscriptionId) {
+        const stripeParams: any = {
+          proration_behavior: prorate ? 'create_prorations' : 'none',
+          items: [{
+            id: subscription.stripeSubscriptionId,
+            price: newPlan.stripeId,
+            quantity
+          }]
+        };
+         if (isDowngrade && !prorate) {
+          stripeParams.proration_behavior = 'none';
+          stripeParams.trial_end = Math.floor(subscription.currentPeriodEnd.getTime() / 1000);
+        }       
+        
+        try{
+        await stripe.subscriptions.update(subscription.stripeSubscriptionId, stripeParams);
+        } catch (error) {
+            handleApiError(error);
+            return createErrorResponse(error);
+        }
+        }
+      
+      // Update subscription in database
+      const updatedSubscription = await prisma.subscription.update({
+        where: { id: subscriptionId },
+        data: {
+          planId: newPlanId,
+          quantity,
+          updatedAt: new Date(),
+          ...(isDowngrade && !prorate ? {} : { planId: newPlanId })
+        },
+        include: {
+          plan: true,
+          organization: true
+        }
+      });
+      
+      // If preserving usage data is needed, transfer it
+      if (isUpgrade || (isDowngrade && prorate)) {
+        await this.transferUsage(subscription as SubscriptionWithDetails, newPlan);
+      }
+      
+      // Create an event for the plan change
+      await createEvent({
+        type: `SUBSCRIPTION_${impact.type.toUpperCase()}`,
+        resourceType: 'SUBSCRIPTION',
+        resourceId: subscriptionId,
+        organizationId: subscription.organizationId,
+        metadata: {
+          oldPlanId: subscription.planId,
+          newPlanId,
+          effectiveDate,
+          proration: prorate,
+          proratedAmount: impact.proratedAmount
+        }
+      });
+      
+      // Send notification email
+      await sendSubscriptionEmail({
+        type: `plan_${impact.type}`,
+        subscription: updatedSubscription as SubscriptionWithDetails,
+        metadata: {
+          oldPlan: subscription.plan.name,
+          newPlan: newPlan.name,
+          effectiveDate,
+          featureChanges: impact.featureChanges
+        }
+      });
+      
+      return { success: true, subscription: updatedSubscription as SubscriptionWithDetails };
+    } catch (error) {
+      console.error('Error updating subscription:', error);
+      return handleApiError(error);
+    
+    
+  }
+  
+  /**
+   * Calculate plan change impact
+   */
+  public async calculatePlanChangeImpact(
+    subscriptionId: string,
+    newPlanId: string,
+    quantity: number = 1
+  ): Promise<{
+    type: 'upgrade' | 'downgrade' | 'crossgrade';
+    proratedAmount: number;
+    effectiveDate: Date;
+    featureChanges: {
+      added: string[];
+      removed: string[];
+      upgraded: { feature: string; oldLimit: number; newLimit: number }[];
+      downgraded: { feature: string; oldLimit: number; newLimit: number }[];
+    };
+  }> {
+    const subscription = await prisma.subscription.findUnique({
+      where: { id: subscriptionId },
+      include: {
+        plan: {
+          include: {
+            features: true
+          }
+        }
+      }
+    });
+
+    if (!subscription) {
+      throw new Error('Subscription not found');
+    }
+
+    const newPlan = await prisma.pricingPlan.findUnique({
+      where: { id: newPlanId },
+      include: {
+        features: true
+      }
+    });
+
+    if (!newPlan) {
+      throw new Error('New plan not found');
+    }
+
+    // Calculate change type
+    const changeType = newPlan.price > subscription.plan.price ? 'upgrade' : 
+                      newPlan.price < subscription.plan.price ? 'downgrade' : 
+                      'crossgrade';
+
+    // Calculate proration if Stripe is configured
+    let proratedAmount = 0;
+    if (subscription.stripeSubscriptionId) {
+        try{
+            const invoice = await stripeApi.invoices.retrieveUpcoming({
+            customer: subscription.stripeCustomerId!,
+            subscription: subscription.stripeSubscriptionId,
+            subscription_items: [{
+              id: subscription.stripeSubscriptionItemId!,
+              price: newPlan.stripePriceId!,
+              quantity
+            }]
+          });
+        } catch (error) {        handleApiError(error);
+            return {type: changeType,proratedAmount: 0,effectiveDate: subscription.currentPeriodEnd, featureChanges};        }
+      });
+      proratedAmount = invoice.amount_due;
+    }
+
+    // Analyze feature changes
+    const featureChanges = {
+      added: [] as string[],
+      removed: [] as string[],
+      upgraded: [] as { feature: string; oldLimit: number; newLimit: number }[],
+      downgraded: [] as { feature: string; oldLimit: number; newLimit: number }[]
+    };
+
+    // Map features by code for easy comparison
+    const currentFeatures = new Map(subscription.plan.features.map(f => [f.code, f]));
+    const newFeatures = new Map(newPlan.features.map(f => [f.code, f]));
+
+    // Find added and removed features
+    for (const [code, feature] of newFeatures) {
+      if (!currentFeatures.has(code)) {
+        featureChanges.added.push(feature.name);
+      }
+    }
+
+    for (const [code, feature] of currentFeatures) {
+      if (!newFeatures.has(code)) {
+        featureChanges.removed.push(feature.name);
+      }
+    }
+
+    // Compare limits for common features
+    for (const [code, newFeature] of newFeatures) {
+      const currentFeature = currentFeatures.get(code);
+      if (currentFeature && newFeature.limits && currentFeature.limits) {
+        const newLimit = JSON.parse(newFeature.limits).maxUsage;
+        const currentLimit = JSON.parse(currentFeature.limits).maxUsage;
+        
+        if (newLimit > currentLimit) {
+          featureChanges.upgraded.push({
+            feature: newFeature.name,
+            oldLimit: currentLimit,
+            newLimit
+          });
+        } else if (newLimit < currentLimit) {
+          featureChanges.downgraded.push({
+            feature: newFeature.name,
+            oldLimit: currentLimit,
+            newLimit
+          });
+        }
+      }
+    }
+
+    return {
+      type: changeType,
+      proratedAmount,
+      effectiveDate: subscription.currentPeriodEnd,
+      featureChanges
+    };
+  }
+
+  /**
+   * Process subscription cancellation with feedback collection
+   */
+  public async cancelSubscriptionWithFeedback(
+    subscriptionId: string,
+    feedback: {
+      reason: string;
+      additionalFeedback?: string;
+      cancelImmediately?: boolean;
+    }
+  ): Promise<SubscriptionWithDetails> {
+    const subscription = await this.cancelSubscription(
+      subscriptionId,
+      feedback.cancelImmediately || false
+    );
+
+    // Store cancellation feedback
+    await prisma.subscriptionCancellationFeedback.create({
+      data: {
+        subscriptionId,
+        reason: feedback.reason,
+        additionalFeedback: feedback.additionalFeedback,
+        timestamp: new Date()
+      }
+    });
+
+    // Trigger win-back workflow if appropriate
+    if (['too_expensive', 'missing_features'].includes(feedback.reason)) {
+      await this.initiateWinBackCampaign(subscriptionId, feedback.reason);
+    }
+
+    return subscription;
+  }
+
+  /**
+   * Initiate win-back campaign for churned customers
+   */
+  private async initiateWinBackCampaign(
+    subscriptionId: string,
+    cancellationReason: string
+  ): Promise<void> {
+    const subscription = await prisma.subscription.findUnique({
+      where: { id: subscriptionId },
+      include: {
+        organization: true,
+        plan: true
+      }
+    });
+
+    if (!subscription) return;
+
+    // Define win-back offer based on cancellation reason
+    const winBackOffer = cancellationReason === 'too_expensive'
+      ? {
+          type: 'DISCOUNT',
+          details: {
+            percentOff: 20,
+            durationMonths: 3
+          }
+        }
+      : {
+          type: 'TRIAL_EXTENSION',
+          details: {
+            durationDays: 30
+          }
+        };
+
+    // Create win-back campaign record
+    await prisma.winBackCampaign.create({
+      data: {
+        subscriptionId,
+        organizationId: subscription.organizationId,
+        reason: cancellationReason,
+        offer: winBackOffer,
+        status: 'PENDING',
+        validUntil: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 days
+      }
+    });
+
+    // Schedule win-back emails
+    const emailSchedule = [
+      { days: 1, template: 'immediate_win_back' },
+      { days: 7, template: 'seven_day_win_back' },
+      { days: 15, template: 'final_win_back' }
+    ];
+
+    for (const schedule of emailSchedule) {
+      await prisma.scheduledEmail.create({
+        data: {
+          organizationId: subscription.organizationId,
+          template: schedule.template,
+          scheduledFor: new Date(Date.now() + schedule.days * 24 * 60 * 60 * 1000),
+          data: {
+            subscriptionId,
+            planName: subscription.plan.name,
+            offer: winBackOffer
+          }
+        }
+      });
+    }
+  }
+   * Compare multiple subscription plans
+   */
+  static async comparePlans(planIds: string[]): Promise<PlanComparison> {
+    const plans = await prisma.pricingPlan.findMany({
+      where: {
+        id: {
+          in: planIds,
+        },
+      },
+      include: {
+        features: {
+          orderBy: {
+            sortOrder: 'asc',
           },
         },
+        usageLimits: true,
       },
     });
 
-    return NextResponse.json(subscriptions);
-  } catch (error) {
-    console.error('Error fetching subscriptions:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch subscriptions' },
-      { status: 500 }
-    );
-  }
-}
-
-export async function PUT(request: Request) {
-  try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const { organizationId, subscriptionId, updates } = await request.json();
-
-    if (!organizationId || !subscriptionId || !updates) {
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
-    }
-
-    const result = await subscriptionService.updateSubscription({
-      organizationId,
-      subscriptionId,
-      updates,
+    // Create a map of all unique features across plans
+    const allFeatures = new Set<string>();
+    plans.forEach(plan => {
+      plan.features.forEach(feature => allFeatures.add(feature.name));
     });
 
-    if (!result.success) {
-      return NextResponse.json({ error: result.error }, { status: 400 });
+    // Compare features across plans
+    const differences = Array.from(allFeatures).map(featureName => {
+      const values: Record<string, string | boolean | number | null> = {};
+      plans.forEach(plan => {
+        const feature = plan.features.find(f => f.name === featureName);
+        values[plan.id] = feature ? (feature.value || feature.included) : null;
+      });
+      return { featureName, values };
+    });
+
+    return {
+      plans: plans.map(plan => ({
+        id: plan.id,
+        name: plan.name,
+        price: plan.basePrice,
+        currency: plan.currency,
+        interval: plan.interval,
+        features: plan.features.map(f => ({
+          name: f.name,
+          included: f.included,
+          value: f.value,
+        })),
+        usageLimits: plan.usageLimits.map(l => ({
+          featureKey: l.featureKey,
+          limit: l.limit,
+          interval: l.interval,
+          overage: l.overage,
+          overagePrice: l.overagePrice,
+        })),
+      })),
+      differences,
+    };
+  }
+
+  /**
+   * Record usage for a subscription
+   */
+  static async recordUsage(
+    subscriptionId: string,
+    featureKey: string,
+    quantity: number,
+    timestamp: Date = new Date()
+  ): Promise<void> {
+    const subscription = await prisma.subscription.findUnique({
+      where: { id: subscriptionId },
+      include: {
+        customer: true,
+      },
+    });
+
+    if (!subscription) {
+      throw new Error('Subscription not found');
     }
 
-    return NextResponse.json({ success: true, subscription: result.subscription });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message || 'Failed to update subscription' }, { status: 500 });
->>>>>>> 4f9d35bd5c5bf095848f6fc99f7e7bfe5212365f
+    // Create usage record
+    await prisma.usageRecord.create({
+      data: {
+        subscriptionId,
+        featureKey,
+        quantity,
+        timestamp,
+        billingPeriodStart: subscription.currentPeriodStart,
+        billingPeriodEnd: subscription.currentPeriodEnd,
+      },
+    });
+
+    // Check if usage exceeds limits
+    const usageLimit = await prisma.usageLimit.findFirst({
+      where: {
+        planId: subscription.planId,
+        featureKey,
+      },
+    });
+
+    if (usageLimit) {
+      const totalUsage = await prisma.usageRecord.aggregate({
+        where: {
+          subscriptionId,
+          featureKey,
+          billingPeriodStart: subscription.currentPeriodStart,
+          billingPeriodEnd: subscription.currentPeriodEnd,
+        },
+        _sum: {
+          quantity: true,
+        },
+      });
+
+      if (totalUsage._sum.quantity && totalUsage._sum.quantity > usageLimit.limit) {
+        // Create overage charge if enabled
+        if (usageLimit.overage && usageLimit.overagePrice) {
+          const overageQuantity = totalUsage._sum.quantity - usageLimit.limit;
+          const overageAmount = overageQuantity * usageLimit.overagePrice;
+           try{
+          await stripeApi.invoiceItems.create({
+              customer: subscription.customer.stripeCustomerId!,
+              amount: Math.round(overageAmount * 100), // Convert to cents
+              currency: 'usd',
+              description: `Overage charge for ${featureKey}`,
+            });
+        }
+      }
+      } catch (error) {
+        handleApiError(error);
+          return;
+        }
+      }
+       
+        // Notify about usage limit exceeded
+        await prisma.notification.create({
+          data: {
+            type: 'USAGE_THRESHOLD',
+            title: 'Usage Limit Exceeded',
+            message: `Usage limit exceeded for ${featureKey}`,
+            organizationId: subscription.customer.organizationId,
+            channels: ['EMAIL', 'IN_APP'],
+          },
+        });
+      }
+    }
   }
+
+  /**
+   * Change subscription plan with proration
+   */
+  static async changePlan(
+    subscriptionId: string,
+    newPlanId: string,
+    prorate: boolean = true
+  ): Promise<void> {
+    const subscription = await prisma.subscription.findUnique({
+      where: { id: subscriptionId },
+      include: {
+        customer: true,
+      },
+    });
+
+    if (!subscription) {
+      throw new Error('Subscription not found');
+    }
+
+    const [currentPlan, newPlan] = await Promise.all([
+      prisma.pricingPlan.findUnique({ where: { id: subscription.planId } }),
+      prisma.pricingPlan.findUnique({ where: { id: newPlanId } }),
+    ]);
+
+    if (!currentPlan || !newPlan) {
+      throw new Error('Plan not found');
+    }
+
+    // Calculate proration if enabled
+    if (prorate) {
+      const remainingDays = differenceInDays(
+        subscription.currentPeriodEnd,
+        new Date()
+      );
+      const totalDays = differenceInDays(
+        subscription.currentPeriodEnd,
+        subscription.currentPeriodStart
+      );
+      
+      const unusedAmount = (currentPlan.basePrice * remainingDays) / totalDays;
+      const prorationAmount = newPlan.basePrice - unusedAmount;
+
+      // Store proration details
+      await prisma.subscription.update({
+        where: { id: subscriptionId },
+        data: {
+          proration: {
+            amount: prorationAmount,
+            date: new Date(),
+            details: {
+              remainingDays,
+              totalDays,
+              unusedAmount,
+              newPlanPrice: newPlan.basePrice,
+            },
+          },
+        },
+      });
+
+      // Create proration invoice item
+      if (prorationAmount > 0) {
+        await stripeApi.invoiceItems.create({
+          customer: subscription.customer.stripeCustomerId!,
+            amount: Math.round(prorationAmount * 100),
+                currency: 'usd',
+                description: `Proration charge for upgrading to ${newPlan.name}`,
+         });
+      }} catch (error){
+          return handleApiError(error);
+        }
+      }
+    }
+
+    // Update subscription
+    await prisma.subscription.update({
+      where: { id: subscriptionId },
+      data: {
+        planId: newPlanId,
+        updatedAt: new Date(),
+      },
+    });
+
+    // Update Stripe subscription if exists
+    if (subscription.customer.stripeCustomerId && newPlan.stripePriceId) {
+      await stripeApi.subscriptions.update(subscription.customer.stripeCustomerId, {
+          items: [{ price: newPlan.stripePriceId }],
+          proration_behavior: prorate ? 'create_prorations' : 'none',
+        });
+    }
+    } catch (error) {
+      handleApiError(error);
+    }
+    }
+  }
+
+  /**
+   * Manage subscription lifecycle
+   */
+  static async updateSubscriptionStatus(
+    subscriptionId: string,
+    action: 'activate' | 'cancel' | 'pause' | 'resume'
+  ): Promise<void> {
+    const subscription = await prisma.subscription.findUnique({
+      where: { id: subscriptionId },
+      include: {
+        customer: true,
+      },
+    });
+
+    if (!subscription) {
+      throw new Error('Subscription not found');
+    }
+
+    switch (action) {
+      case 'activate':
+        await prisma.subscription.update({
+          where: { id: subscriptionId },
+          data: {
+            status: 'ACTIVE',
+            pausedAt: null,
+            resumesAt: null,
+          },
+        });
+        break;
+
+      case 'cancel':
+        await prisma.subscription.update({
+          where: { id: subscriptionId },
+          data: {
+            status: 'CANCELED',
+            cancelAtPeriodEnd: true,
+          },
+        });
+
+        if (subscription.customer.stripeCustomerId) {
+          try{
+          await stripeApi.subscriptions.update(subscription.customer.stripeCustomerId, {
+              cancel_at_period_end: true,
+            });
+            } catch (error) {
+              handleApiError(error);
+              return;
+            }
+        }
+        break;
+
+      case 'pause':
+        const pausedAt = new Date();
+        const resumesAt = addDays(pausedAt, 30); // Default pause duration
+
+        await prisma.subscription.update({
+          where: { id: subscriptionId },
+          data: {
+            status: 'PAUSED',
+            pausedAt,
+            resumesAt,
+          },
+        });
+
+        if (subscription.customer.stripeCustomerId) {
+          try{
+          await stripeApi.subscriptions.update(subscription.customer.stripeCustomerId, {
+              pause_collection: {
+                behavior: 'void',
+                resumes_at: Math.floor(resumesAt.getTime() / 1000),
+              },
+            });
+          } catch (error) {
+            handleApiError(error);
+                return handleApiError(error);
+            }
+        }
+        break;
+
+      case 'resume':
+        await prisma.subscription.update({
+          where: { id: subscriptionId },
+          data: {
+            status: 'ACTIVE',
+            pausedAt: null,
+            resumesAt: null,
+          },
+        });
+
+        if (subscription.customer.stripeCustomerId) {
+          try{
+          await stripeApi.subscriptions.update(subscription.customer.stripeCustomerId, {
+              pause_collection: '',
+            });
+            } catch (error) {
+              handleApiError(error);
+                return;
+            }
+        }
+        break;
+
+      default:
+        throw new Error('Invalid subscription action');
+    }
+}
+}
 }

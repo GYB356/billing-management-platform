@@ -1,232 +1,223 @@
-import { NextResponse } from 'next/server';
-import type { NextRequest } from 'next/server';
-import { pciComplianceMiddleware } from './middleware/pci-compliance';
-import { billingSecurity } from './middleware/billing-security';
-import { apiAuthMiddleware } from './middleware/apiAuth';
-import { createAuditLogMiddleware } from './lib/logging/audit';
-import { getToken } from 'next-auth/jwt';
-import { withRetry } from './lib/auth-utils';
-import { isRateLimited } from './lib/rate-limiter';
+import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
+import { prisma } from '@/lib/prisma';
+import { z, ZodError } from 'zod';
+import crypto from 'crypto';
+import { handleApiError } from '@/lib/utils/error-handling';
+import { createSuccessResponse, createErrorResponse as createFormattedErrorResponse } from '@/lib/utils/response-format';
+import * as StripeService from '@/lib/stripe';
 
-const auditLogMiddleware = createAuditLogMiddleware();
 
-// Configuration for auth protected paths
-const publicPaths = [
-  '/',
-  '/auth/login',
-  '/auth/register',
-  '/auth/forgot-password',
-  '/auth/reset-password',
-  '/api/auth/',
-  '/api/webhooks/',
-  '/api/public/',
-  '/api/health',
-  '/_next/',
-  '/favicon.ico',
-  '/robots.txt',
-  '/sitemap.xml',
-];
 
-const authPaths = [
-  '/dashboard',
-  '/settings',
-  '/profile',
-  '/payment',
-  '/billing',
-  '/usage',
-  '/account',
-  '/invoices',
-  '/analytics',
-  '/customer-portal',
-];
+export const config = { api: { bodyParser: false } }
 
-// Helper function to implement timeout for promises
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, errorMessage: string): Promise<T> {
-  let timeoutId: NodeJS.Timeout;
-  
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => {
-      reject(new Error(errorMessage));
-    }, timeoutMs);
-  });
-  
-  return Promise.race([
-    promise.then(result => {
-      clearTimeout(timeoutId);
-      return result;
-    }),
-    timeoutPromise
-  ]);
+
+const createWebhookSchema = z.object({
+  url: z.string().url(),
+  events: z.array(z.string()),
+  organizationId: z.string(),
+  description: z.string().optional(),
+  secret: z.string().optional(),
+});
+
+
+
+// Validation schema for webhook updates
+const updateWebhookSchema = z.object({
+  url: z.string().url().optional(),
+  events: z.array(z.string()).optional(),
+  description: z.string().optional(),
+  status: z.enum(['ACTIVE', 'INACTIVE']).optional(),
+});
+
+// Generate a secure webhook secret
+function generateWebhookSecret() {
+  return crypto.randomBytes(32).toString('hex');
 }
 
-// Helper functions for path checking
-const isPublic = (path: string): boolean => publicPaths.some(p => path.startsWith(p));
-const requiresAuth = (path: string): boolean => authPaths.some(p => path.startsWith(p));
-
-export async function middleware(request: NextRequest) {
-  const pathname = request.nextUrl.pathname;
-  
-  // Check rate limiting for authentication endpoints
-  if (pathname.startsWith('/auth/')) {
-    if (isRateLimited(request)) {
-      return new NextResponse(
-        JSON.stringify({
-          error: 'Too many requests',
-          message: 'Please try again later'
-        }),
-        { status: 429, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
+// GET /api/webhooks - List webhooks
+export async function GET(req: NextRequest) {
+  const token = req.headers.get('Authorization')?.split(' ')[1];
+  if (!token) {
+    return createFormattedErrorResponse('Unauthorized', 401);
   }
-
-  try {
-    // Get the user's session token with retry logic and monitoring
-    const token = await withRetry(
-      async () => await withTimeout(
-        getToken({
-          req: request,
-          secret: process.env.NEXTAUTH_SECRET,
-        }),
-        10000,
-        'Session token verification timed out'
-      ),
-      3, // max 3 attempts
-      1000, // 1 second initial delay between retries
-      'token-verification'
-    );
-
-    // Enhanced token expiration check with grace period
-    const currentTime = Math.floor(Date.now() / 1000);
-    const gracePeriod = 30; // 30 seconds grace period for clock sync issues
-
-    // Add detailed context for debugging
-    const authContext = {
-      path: pathname,
-      hasToken: !!token,
-      tokenExp: token?.exp,
-      currentTime,
-      isPublic: isPublic(pathname),
-      requiresAuth: requiresAuth(pathname)
-    };
-
-    console.debug('Auth context:', authContext);
-
-    if (isPublic(pathname) && token && pathname.startsWith('/auth/')) {
-      console.info(`Redirecting authenticated user from ${pathname} to dashboard`, authContext);
-      return NextResponse.redirect(new URL('/dashboard', request.url));
+  const session = await getServerSession({ ...authOptions, callbacks: { ...authOptions.callbacks, session: async ({ session }) => session } });
+  if (!session?.user.id) {
+    return createFormattedErrorResponse('Unauthorized', 401);
     }
-      
-    if (requiresAuth(pathname) && !token) {
-      console.warn('Auth required but no token found', {
-        path: pathname,
-        ip: request.ip,
-        timestamp: new Date().toISOString()
-      });
-      const redirectUrl = new URL('/auth/login', request.url);
-      redirectUrl.searchParams.set('callbackUrl', pathname);
-      return NextResponse.redirect(redirectUrl);
-    }
-      
-    if (requiresAuth(pathname) && token && ((token.exp as number) - gracePeriod) < currentTime) {
-      console.warn('Session expired', {
-        ...authContext,
-        tokenAge: currentTime - (token.iat as number),
-        gracePeriodRemaining: (token.exp as number) - currentTime
-      });
-      const redirectUrl = new URL('/auth/login', request.url);
-      redirectUrl.searchParams.set('callbackUrl', pathname);
-      redirectUrl.searchParams.set('error', 'SessionExpired');
-      return NextResponse.redirect(redirectUrl);
+  try {    
+    const { searchParams } = new URL(req.url);
+    const organizationId = searchParams.get('organizationId');
+    if (!organizationId) {
+      return createFormattedErrorResponse({ message: 'Organization ID is required' }, 400);
     }
 
-    const response = NextResponse.next();
-    applySecurityHeaders(response);
-    return response;
-  } catch (error) {
-    console.error('Authentication error:', {
-      path: pathname,
-      error: error instanceof Error ? error.message : 'Unknown error',
-      stack: error instanceof Error ? error.stack : undefined
+    const webhooks = await prisma.webhook.findMany({
+      where: { organizationId },
+      select: {
+        id: true,
+        url: true,
+        events: true,
+        status: true,
+        lastSuccess: true,
+        lastFailure: true,
+        createdAt: true,
+        updatedAt: true,
+      },
     });
 
-    // Handle different types of errors appropriately
-    if (error instanceof Error && error.message.includes('timed out')) {
-      return new NextResponse(
-        JSON.stringify({
-          error: 'Authentication timeout',
-          message: 'Please try again'
-        }),
-        {
-          status: 503,
-          headers: {
-            'Content-Type': 'application/json'
-          }
-        }
-      );
-    }
-
-    return new NextResponse(
-      JSON.stringify({
-        error: 'Authentication error',
-        message: 'An unexpected error occurred'
-      }),
-      {
-        status: 500,
-        headers: {
-          'Content-Type': 'application/json'
-        }
-      }
-    );
+    return createSuccessResponse(webhooks);
+  } catch (error) {
+    return handleApiError(error);
   }
 }
 
-// Apply security headers to response
-function applySecurityHeaders(response: NextResponse) {
-  const headers = response.headers;
-  
-  // Ensure cookies are secure (HTTPS only)
-  headers.set('Set-Cookie', 'Path=/; Secure; HttpOnly; SameSite=Strict');
-  
-  // Content Security Policy
-  headers.set(
-    'Content-Security-Policy',
-    "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.stripe.com; frame-src 'self' https://*.stripe.com; connect-src 'self' https://*.stripe.com; img-src 'self' data: https://*.stripe.com; style-src 'self' 'unsafe-inline';"
-  );
-  
-  // Strict Transport Security
-  headers.set(
-    'Strict-Transport-Security',
-    'max-age=63072000; includeSubDomains; preload'
-  );
-  
-  // X-Content-Type-Options
-  headers.set('X-Content-Type-Options', 'nosniff');
-  
-  // X-Frame-Options
-  headers.set('X-Frame-Options', 'DENY');
-  
-  // X-XSS-Protection
-  headers.set('X-XSS-Protection', '1; mode=block');
-  
-  // Referrer-Policy
-  headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
-  
-  // Permissions-Policy
-  headers.set(
-    'Permissions-Policy',
-    'camera=(), microphone=(), geolocation=(), interest-cohort=()'
-  );
+// POST /api/webhooks - Handle stripe webhooks
+
+export async function POST(req: NextRequest): Promise<NextResponse> {
+    try {
+        const webhookSecret: string = process.env.STRIPE_WEBHOOK_SECRET!;
+        if (!webhookSecret) {
+            return handleApiError(createErrorResponse('Webhook secret not configured', 500, 'WEBHOOK_SECRET_NOT_CONFIGURED'));
+        }
+        const rawBody = await req.text();
+        const signature = req.headers.get('stripe-signature');
+        let stripeEvent: Event;
+        try {
+            if (!signature) {
+                throw new Error('Missing stripe-signature header');
+            }            
+            stripeEvent = StripeService.webhooks.constructEvent(
+                rawBody,
+                signature,
+                webhookSecret
+            );
+        } catch (error) {
+            return handleApiError(createErrorResponse('Webhook Error: Invalid signature', 400, 'INVALID_SIGNATURE'));
+
+        }
+        // Handle the event based on its type
+        
+        switch (stripeEvent.type) {
+            case 'customer.subscription.updated':                
+                const subscription = stripeEvent.data.object;
+                console.log('subscription updated:', subscription);
+                // Then define and call a function to handle the event customer.subscription.updated
+                break;
+            case 'invoice.payment_failed':
+                const invoice = stripeEvent.data.object;
+                console.log('invoice payment failed:', invoice);
+                // Then define and call a function to handle the event invoice.payment_failed
+                break;
+            // ... handle other event types
+            default:
+                console.log(`Unhandled event type: ${stripeEvent.type}`);
+                
+                break;
+        }
+        return createSuccessResponse({ received: true });
+    } catch (error) {
+        return handleApiError(error);
+    }
+}
+// POST /api/webhooks - Create webhook
+export async function POST(req: NextRequest) {
+    try {
+      const token = req.headers.get('Authorization')?.split(' ')[1];
+      if (!token) {
+        return createFormattedErrorResponse('Unauthorized', 401);
+      }
+      const session = await getServerSession({ ...authOptions, callbacks: { ...authOptions.callbacks, session: async ({ session }) => session } });
+      if (!session?.user.id) {
+        return createFormattedErrorResponse('Unauthorized', 401);
+      }
+        const body = await req.json();
+        const validatedData = createWebhookSchema.parse(body);
+        const webhook = await prisma.webhook.create({
+            data: {
+                ...validatedData,
+                secret: validatedData.secret || generateWebhookSecret(),
+                status: 'ACTIVE',
+                retryConfig: {
+                    maxAttempts: 3,
+                    initialDelay: 5000,
+                    maxDelay: 60000,
+                    backoffMultiplier: 2,
+                },
+                organization: {
+                    connect: { id: body.organizationId },
+                },
+            },
+        });
+
+    return createSuccessResponse(webhook);
+  } catch (error) {
+        if (error instanceof z.ZodError) {
+            return createFormattedErrorResponse({ message: 'Invalid request data', details: (error as ZodError).errors }, 400);
+        }
+    return handleApiError(error);    
+  }
+
+}
+// PATCH /api/webhooks/[id] - Update webhook
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
+    try {
+      const token = req.headers.get('Authorization')?.split(' ')[1];
+      if (!token) {
+        return createFormattedErrorResponse('Unauthorized', 401);
+      }
+      const session = await getServerSession({ ...authOptions, callbacks: { ...authOptions.callbacks, session: async ({ session }) => session } });
+      if (!session?.user.id) {
+        return createFormattedErrorResponse('Unauthorized', 401);
+      }
+      const body = await req.json();
+      let validatedData; try {
+        validatedData = updateWebhookSchema.parse(body);
+      } catch (error) {
+
+          return createFormattedErrorResponse({ message: 'Invalid request data', details: error.errors }, 400);
+      }
+
+    const webhook = await prisma.webhook.update({
+      where: { id: params.id },
+      data: validatedData,
+    });
+
+    return createSuccessResponse(webhook);
+  } catch (error) {
+        if (error instanceof z.ZodError) {
+            return createFormattedErrorResponse({ message: 'Invalid request data', details: error.errors }, 400);
+        }
+  }
+    return handleApiError(error);
 }
 
-// Middleware config
-export const config = {
-  matcher: [
-    /*
-     * Match all request paths except for the ones starting with:
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico (favicon file)
-     */
-    '/((?!_next/static|_next/image|favicon.ico).*)',
-  ],
-};
+// DELETE /api/webhooks/[id] - Delete webhook
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+      const token = req.headers.get('Authorization')?.split(' ')[1];
+      if (!token) {
+        return createFormattedErrorResponse('Unauthorized', 401);
+      }
+      const session = await getServerSession({ ...authOptions, callbacks: { ...authOptions.callbacks, session: async ({ session }) => session } });
+      if (!session?.user.id) {
+        return createFormattedErrorResponse('Unauthorized', 401);
+      }
+
+    await prisma.webhook.delete({
+      where: { id: params.id },
+    });
+
+    return createSuccessResponse(null);
+  } catch (error) {
+    return handleApiError(error);
+    
+  }
+}

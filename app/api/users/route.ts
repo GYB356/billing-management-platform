@@ -2,7 +2,9 @@ import { z } from 'zod';
 import { createHandler } from '@/lib/api/handler';
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { auth } from '@/lib/auth';
 import { sanitizeInput } from '@/lib/api/security';
+import { rateLimit } from '@/lib/utils/rate-limit';
 
 // Validation schemas
 const createUserSchema = z.object({
@@ -19,8 +21,14 @@ const updateUserSchema = z.object({
 
 // GET /api/users - List users
 export const GET = createHandler(
-  async (req) => {
+  async (req,params,user) => {
+    
     const { searchParams } = new URL(req.url);
+
+    const limitId = user ? user.id : 'user'
+
+    rateLimit(limitId, 'user')
+
     const page = Number(searchParams.get('page')) || 1;
     const limit = Number(searchParams.get('limit')) || 10;
     const search = searchParams.get('search') || '';
@@ -70,8 +78,13 @@ export const GET = createHandler(
 
 // POST /api/users - Create user
 export const POST = createHandler(
-  async (req) => {
+  async (req,params,user) => {
+
     const data = await req.json();
+    
+    const limitId = user ? user.id : 'user'
+    rateLimit(limitId, 'user')
+
     const validatedData = createUserSchema.parse(data);
 
     const user = await prisma.user.create({
@@ -100,8 +113,11 @@ export const POST = createHandler(
 
 // PUT /api/users/:id - Update user
 export const PUT = createHandler(
-  async (req, params) => {
+  async (req, params,user) => {
     const userId = params.id as string;
+    
+    const limitId = user ? user.id : 'user'
+    rateLimit(limitId, 'user')
     const data = await req.json();
     const validatedData = updateUserSchema.parse(data);
 
@@ -132,8 +148,11 @@ export const PUT = createHandler(
 
 // DELETE /api/users/:id - Delete user
 export const DELETE = createHandler(
-  async (req, params) => {
+  async (req, params, user) => {
     const userId = params.id as string;
+
+    const limitId = user ? user.id : 'user'
+    rateLimit(limitId, 'user')
 
     await prisma.user.delete({
       where: { id: userId },

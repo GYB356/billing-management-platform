@@ -1,13 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import prisma from '@/lib/prisma';
-import Stripe from 'stripe';
+import { PrismaClient } from '@prisma/client';
+import { Stripe } from 'stripe';
+import { InvoiceService } from '@/lib/services/invoice-service';
+import { UsageService } from '@/lib/services/usage-service';
+import { EventManager } from '@/lib/events';
+import { BackgroundJobManager } from '@/lib/background-jobs/background-job-manager';
+import { Config } from '@/lib/config';
+import { SubscriptionService } from '@/lib/services/subscription-service';
+import { IBackgroundJob, IConfig, IEventManager, IPrisma, IStripe } from '@/lib/types';
+import { BackgroundJob } from '@/lib/background-jobs/background-job';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: '2023-10-16', // Use the latest Stripe API version
-});
-
+const prisma: IPrisma = new PrismaClient();
+const stripe: IStripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: '2023-10-16' });
+const config: IConfig = Config.getConfig();
+const backgroundJob: IBackgroundJob = BackgroundJob;
 export async function POST(req: NextRequest) {
   try {
     // Validate session
@@ -18,6 +26,11 @@ export async function POST(req: NextRequest) {
         { status: 401 }
       );
     }
+    const eventManager: IEventManager = new EventManager();
+    const backgroundJobManager = new BackgroundJobManager(backgroundJob);
+    const invoiceService = new InvoiceService();
+    const usageService = new UsageService();
+    const subscriptionService = new SubscriptionService(invoiceService, usageService, prisma, stripe, eventManager, backgroundJobManager, config, backgroundJob);
 
     // Parse request body
     const { subscriptionId, newPlanId, quantity = 1 } = await req.json();
@@ -30,7 +43,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Fetch subscription from database
-    const subscription = await prisma.subscription.findUnique({
+    const subscription = await (prisma as IPrisma).subscription.findUnique({
       where: {
         id: subscriptionId,
         userId: session.user.id,
@@ -56,7 +69,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Get the new plan
-    const newPlan = await prisma.plan.findUnique({
+    const newPlan = await (prisma as IPrisma).plan.findUnique({
       where: { id: newPlanId },
     });
 

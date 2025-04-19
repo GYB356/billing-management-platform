@@ -2,50 +2,50 @@ const jwt = require('jsonwebtoken');
 const { promisify } = require('util');
 const User = require('../models/user');
 const { AppError, asyncHandler } = require('./errorHandler');
+const RefreshToken = require('../models/refreshToken');
 
 /**
  * Middleware to protect routes - verifies that user is authenticated
  */
-exports.protect = asyncHandler(async (req, res, next) => {
-  // 1) Check if token exists
-  let token;
-  if (
-    req.headers.authorization &&
-    req.headers.authorization.startsWith('Bearer')
-  ) {
-    token = req.headers.authorization.split(' ')[1];
-  } else if (req.cookies && req.cookies.jwt) {
-    token = req.cookies.jwt;
+exports.protect = async (req, res, next) => {
+  try {
+    // 1) Get token
+    let token;
+    if (req.headers.authorization?.startsWith('Bearer')) {
+      token = req.headers.authorization.split(' ')[1];
+    }
+
+    if (!token) {
+      return next(new AppError('You are not logged in', 401));
+    }
+
+    // 2) Verify token
+    const decoded = await promisify(jwt.verify)(token, process.env.JWT_SECRET);
+
+    // 3) Check if user still exists
+    const user = await User.findById(decoded.id);
+    if (!user) {
+      return next(new AppError('User no longer exists', 401));
+    }
+
+    // 4) Check if user changed password after token was issued
+    if (user.changedPasswordAfter(decoded.iat)) {
+      return next(new AppError('User recently changed password', 401));
+    }
+
+    // Grant access to protected route
+    req.user = user;
+    next();
+  } catch (error) {
+    if (error.name === 'JsonWebTokenError') {
+      return next(new AppError('Invalid token', 401));
+    }
+    if (error.name === 'TokenExpiredError') {
+      return next(new AppError('Token expired', 401));
+    }
+    next(error);
   }
-
-  if (!token) {
-    return next(new AppError('You are not logged in! Please log in to get access.', 401));
-  }
-
-  // 2) Verify token
-  const decoded = await promisify(jwt.verify)(token, process.env.JWT_SECRET);
-
-  // 3) Check if user still exists
-  const currentUser = await User.findById(decoded.id);
-  if (!currentUser) {
-    return next(new AppError('The user belonging to this token no longer exists.', 401));
-  }
-
-  // 4) Check if user changed password after the token was issued
-  if (currentUser.changedPasswordAfter && currentUser.changedPasswordAfter(decoded.iat)) {
-    return next(new AppError('User recently changed password! Please log in again.', 401));
-  }
-
-  // 5) Check if account is locked
-  if (currentUser.isAccountLocked()) {
-    return next(new AppError('Your account has been locked due to too many failed login attempts. Please reset your password or try again later.', 423));
-  }
-
-  // GRANT ACCESS TO PROTECTED ROUTE
-  req.user = currentUser;
-  res.locals.user = currentUser;
-  next();
-});
+};
 
 /**
  * Middleware to restrict access to certain roles
@@ -53,11 +53,9 @@ exports.protect = asyncHandler(async (req, res, next) => {
  */
 exports.restrictTo = (...roles) => {
   return (req, res, next) => {
-    // roles is an array like ['admin', 'lead-guide']
     if (!roles.includes(req.user.role)) {
-      return next(new AppError('You do not have permission to perform this action', 403));
+      return next(new AppError('You do not have permission', 403));
     }
-
     next();
   };
 };
@@ -143,4 +141,75 @@ exports.logout = (req, res) => {
     status: 'success',
     message: 'Successfully logged out'
   });
+};
+
+const signToken = (id) => {
+  return jwt.sign({ id }, process.env.JWT_SECRET, {
+    expiresIn: process.env.JWT_EXPIRES_IN
+  });
+};
+
+const signRefreshToken = (id) => {
+  return jwt.sign({ id }, process.env.REFRESH_TOKEN_SECRET, {
+    expiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN
+  });
+};
+
+exports.createTokens = async (user) => {
+  const accessToken = signToken(user._id);
+  const refreshToken = signRefreshToken(user._id);
+
+  // Save refresh token to database
+  await RefreshToken.create({
+    token: refreshToken,
+    user: user._id,
+    expiresAt: new Date(Date.now() + process.env.REFRESH_TOKEN_EXPIRES_IN * 1000)
+  });
+
+  return { accessToken, refreshToken };
+};
+
+exports.refreshToken = async (req, res, next) => {
+  try {
+    const { refreshToken } = req.body;
+
+    if (!refreshToken) {
+      return next(new AppError('Refresh token is required', 400));
+    }
+
+    // Verify refresh token
+    const decoded = await promisify(jwt.verify)(
+      refreshToken,
+      process.env.REFRESH_TOKEN_SECRET
+    );
+
+    // Check if refresh token exists in database
+    const storedToken = await RefreshToken.findOne({
+      token: refreshToken,
+      user: decoded.id
+    });
+
+    if (!storedToken || storedToken.isExpired()) {
+      return next(new AppError('Invalid refresh token', 401));
+    }
+
+    // Get user
+    const user = await User.findById(decoded.id);
+    if (!user) {
+      return next(new AppError('User no longer exists', 401));
+    }
+
+    // Generate new tokens
+    const tokens = await exports.createTokens(user);
+
+    // Delete old refresh token
+    await storedToken.remove();
+
+    res.json({
+      status: 'success',
+      data: tokens
+    });
+  } catch (error) {
+    next(error);
+  }
 };

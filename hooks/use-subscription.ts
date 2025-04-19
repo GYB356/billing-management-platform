@@ -1,112 +1,121 @@
-import { useState } from 'react';
-import { useSubscription } from '@/contexts/subscription-context';
-import { SubscriptionWithPlan } from '@/lib/subscription';
+import { useState, useCallback, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
+import { 
+  createSubscription, 
+  cancelUserSubscription, 
+  resumeUserSubscription,
+  changeUserSubscriptionPlan,
+  redirectToBillingPortal 
+} from '@/actions/subscription';
 
-interface UseSubscriptionActions {
-  updatePlan: (planId: string) => Promise<void>;
-  cancelSubscription: () => Promise<void>;
-  resumeSubscription: () => Promise<void>;
-  recordUsage: (featureId: string, quantity: number) => Promise<void>;
-}
+export function useSubscription() {
+  const [isPending, startTransition] = useTransition();
+  const [isLoading, setIsLoading] = useState(false);
+  const router = useRouter();
 
-export function useSubscriptionActions(): UseSubscriptionActions {
-  const { subscription, refreshSubscription } = useSubscription();
-  const [loading, setLoading] = useState(false);
-
-  const updatePlan = async (planId: string) => {
-    if (!subscription) return;
-
+  // Helper to show loading state
+  const withLoading = async <T,>(fn: () => Promise<T>): Promise<T> => {
+    setIsLoading(true);
     try {
-      setLoading(true);
-      const response = await fetch('/api/subscription/update', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ planId }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to update subscription');
-      }
-
-      await refreshSubscription();
-    } catch (error) {
-      console.error('Error updating subscription:', error);
-      throw error;
+      return await fn();
     } finally {
-      setLoading(false);
+      setIsLoading(false);
     }
   };
-
-  const cancelSubscription = async () => {
-    if (!subscription) return;
-
-    try {
-      setLoading(true);
-      const response = await fetch('/api/subscription/cancel', {
-        method: 'POST',
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to cancel subscription');
+  
+  /**
+   * Subscribe to a plan
+   */
+  const subscribe = useCallback(async (priceId: string, trialDays?: number) => {
+    return withLoading(async () => {
+      const result = await createSubscription({ priceId, trialDays });
+      
+      if (result.error) {
+        toast.error(result.error);
+        return false;
       }
-
-      await refreshSubscription();
-    } catch (error) {
-      console.error('Error canceling subscription:', error);
-      throw error;
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const resumeSubscription = async () => {
-    if (!subscription) return;
-
-    try {
-      setLoading(true);
-      const response = await fetch('/api/subscription/resume', {
-        method: 'POST',
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to resume subscription');
+      
+      if (result.url) {
+        router.push(result.url);
+        return true;
       }
-
-      await refreshSubscription();
-    } catch (error) {
-      console.error('Error resuming subscription:', error);
-      throw error;
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const recordUsage = async (featureId: string, quantity: number) => {
-    if (!subscription) return;
-
-    try {
-      setLoading(true);
-      const response = await fetch('/api/subscription/usage', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ featureId, quantity }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to record usage');
+      
+      return false;
+    });
+  }, [router]);
+  
+  /**
+   * Cancel subscription
+   */
+  const cancelSubscription = useCallback((subscriptionId: string, atPeriodEnd: boolean = true) => {
+    startTransition(async () => {
+      const result = await cancelUserSubscription({ subscriptionId, atPeriodEnd });
+      
+      if (result.error) {
+        toast.error(result.error);
+      } else {
+        toast.success(
+          atPeriodEnd 
+            ? 'Your subscription will be canceled at the end of the billing period' 
+            : 'Your subscription has been canceled'
+        );
       }
-    } catch (error) {
-      console.error('Error recording usage:', error);
-      throw error;
-    } finally {
-      setLoading(false);
-    }
-  };
+    });
+  }, []);
+  
+  /**
+   * Resume subscription
+   */
+  const resumeSubscription = useCallback((subscriptionId: string) => {
+    startTransition(async () => {
+      const result = await resumeUserSubscription(subscriptionId);
+      
+      if (result.error) {
+        toast.error(result.error);
+      } else {
+        toast.success('Your subscription has been resumed');
+      }
+    });
+  }, []);
+  
+  /**
+   * Change subscription plan
+   */
+  const changePlan = useCallback((subscriptionId: string, newPriceId: string) => {
+    startTransition(async () => {
+      const result = await changeUserSubscriptionPlan({ subscriptionId, newPriceId });
+      
+      if (result.error) {
+        toast.error(result.error);
+      } else {
+        toast.success('Your subscription plan has been updated');
+      }
+    });
+  }, []);
+  
+  /**
+   * Open billing portal
+   */
+  const openBillingPortal = useCallback(async () => {
+    return withLoading(async () => {
+      const result = await redirectToBillingPortal();
+      
+      if (result?.error) {
+        toast.error(result.error);
+        return false;
+      }
+      
+      return true;
+    });
+  }, []);
 
   return {
-    updatePlan,
+    isLoading: isLoading || isPending,
+    subscribe,
     cancelSubscription,
     resumeSubscription,
-    recordUsage,
+    changePlan,
+    openBillingPortal,
   };
 } 

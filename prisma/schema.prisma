@@ -12,18 +12,29 @@ datasource db {
 
 // Existing models
 model User {
-  id          String   @id @default(cuid())
-  name        String?
-  email       String   @unique
-  password    String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  notifications Notification[]
-  role        String    @default("user")
-  refreshTokens RefreshToken[]
-  payments    Payment[]
-  retryAttempts RetryAttempt[]
-  // ...existing fields...
+  id                String    @id @default(cuid())
+  name              String?
+  email             String?   @unique
+  emailVerified     DateTime?
+  image             String?
+  accounts          Account[]
+  sessions          Session[]
+  // Add Stripe-related fields
+  stripeCustomerId  String?   @unique
+  subscriptionId    String?   @unique
+  subscriptionStatus String?
+  currentPeriodEnd  DateTime?
+  password          String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  notifications     Notification[]
+  role              String    @default("user")
+  refreshTokens     RefreshToken[]
+  payments          Payment[]
+  retryAttempts     RetryAttempt[]
+  subscriptions     Subscription[]
+  invoices          Invoice[]
+  subscriptionEvents SubscriptionEvent[]
 
   @@index([email])
 }
@@ -284,6 +295,11 @@ model Payment {
   orderId         String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+  refundedAmount  Float?
+  refundedAt      DateTime?
+  failureReason   String?
+  receiptUrl      String?
+  billingDetails  Json?
 
   @@index([userId])
   @@index([customerId])
@@ -677,3 +693,142 @@ model RetryLog {
 }
 
 // Additional models can be added here
+
+// Payment model for tracking all payment events
+model Payment {
+  id          String      @id @default(cuid())
+  amount      Float
+  currency    String      @default("usd")
+  status      PaymentStatus
+  provider    String      @default("stripe")
+  providerId  String      // Stripe payment/charge ID
+  invoiceId   String?     // Stripe invoice ID
+  userId      String
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  metadata    Json?       // Additional data from provider
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  refundedAmount Float?
+  refundedAt  DateTime?
+  failureReason String?
+  receiptUrl  String?
+  billingDetails Json?
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id])
+  subscriptionId String?
+
+  @@index([providerId])
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+  DISPUTED
+}
+
+// Subscription model for tracking subscription lifecycle
+model Subscription {
+  id              String        @id @default(cuid())
+  userId          String
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status          SubscriptionStatus
+  providerId      String        // Stripe subscription ID
+  planId          String        // Reference to price/product in Stripe
+  planName        String        // Human-readable plan name
+  currentPeriodStart DateTime
+  currentPeriodEnd DateTime
+  cancelAt        DateTime?     // When subscription should cancel (end of current period)
+  canceledAt      DateTime?     // When cancel was requested
+  pausedAt        DateTime?
+  resumesAt       DateTime?
+  trialEndsAt     DateTime?
+  metadata        Json?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  payments        Payment[]
+  invoices        Invoice[]
+  events          SubscriptionEvent[]
+  
+  @@index([userId])
+  @@index([providerId])
+  @@index([status])
+  @@index([currentPeriodEnd])
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  CANCELED
+  INCOMPLETE
+  INCOMPLETE_EXPIRED
+  TRIALING
+  PAST_DUE
+  UNPAID
+  PAUSED
+}
+
+// Invoice model for tracking invoice lifecycle
+model Invoice {
+  id              String        @id @default(cuid())
+  userId          String        
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  providerId      String        // Stripe invoice ID
+  subscriptionId  String?       
+  subscription    Subscription? @relation(fields: [subscriptionId], references: [id])
+  status          InvoiceStatus
+  amount          Float
+  currency        String        @default("usd")
+  dueDate         DateTime?
+  paidAt          DateTime?
+  invoiceUrl      String?       // URL to Stripe invoice PDF/HTML
+  invoicePdf      String?       // URL to Stripe invoice PDF
+  metadata        Json?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([userId])
+  @@index([providerId])
+  @@index([status])
+}
+
+enum InvoiceStatus {
+  DRAFT
+  OPEN
+  PAID
+  UNCOLLECTIBLE
+  VOID
+}
+
+// Event logs for subscription lifecycle
+model SubscriptionEvent {
+  id              String        @id @default(cuid())
+  subscriptionId  String
+  subscription    Subscription  @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  userId          String
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type            String        // Event type (created, updated, canceled, etc.)
+  data            Json?         // Event data
+  createdAt       DateTime      @default(now())
+
+  @@index([subscriptionId])
+  @@index([userId])
+  @@index([type])
+  @@index([createdAt])
+}
+
+// Track processed Stripe events for idempotency
+model StripeEvent {
+  id           String   @id @default(cuid())
+  eventId      String   @unique // Stripe event ID
+  eventType    String   // Stripe event type (e.g., 'invoice.payment_succeeded')
+  processedAt  DateTime @default(now())
+  createdAt    DateTime @default(now())
+
+  @@index([eventId])
+  @@index([eventType])
+  @@index([processedAt])
+}

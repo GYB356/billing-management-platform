@@ -1,260 +1,153 @@
 const Invoice = require('../models/invoice');
-const Customer = require('../models/customer');
 const { AppError } = require('../middleware/errorHandler');
-const APIFeatures = require('../utils/apiFeatures');
+const { validateInvoiceInput } = require('../utils/validation');
+const { cacheMiddleware } = require('../middleware/cache');
 
-/**
- * Create a new invoice
- */
-exports.createInvoice = async (req, res, next) => {
-  // Check if customer exists
-  const customer = await Customer.findById(req.body.customer);
-  if (!customer) {
-    return next(new AppError('Customer not found', 404));
-  }
+// Wrap async functions to avoid try-catch blocks
+const catchAsync = fn => {
+  return (req, res, next) => {
+    fn(req, res, next).catch(next);
+  };
+};
 
-  // Calculate invoice total amount
-  const totalAmount = req.body.items.reduce((total, item) => {
-    return total + (item.quantity * item.unitPrice);
-  }, 0);
-
-  // Generate invoice number (simple implementation)
-  const lastInvoice = await Invoice.findOne().sort({ createdAt: -1 });
-  const invoiceNumber = lastInvoice 
-    ? `INV-${parseInt(lastInvoice.invoiceNumber.split('-')[1]) + 1}`.padStart(10, '0') 
-    : 'INV-0000000001';
-
-  // Create the invoice
-  const newInvoice = await Invoice.create({
-    invoiceNumber,
-    customer: req.body.customer,
-    items: req.body.items,
-    totalAmount,
-    dueDate: req.body.dueDate,
-    notes: req.body.notes,
+exports.createInvoice = catchAsync(async (req, res) => {
+  // Validate input
+  const validatedData = await validateInvoiceInput(req.body);
+  
+  const invoice = await Invoice.create({
+    ...validatedData,
     createdBy: req.user._id
   });
 
   res.status(201).json({
     status: 'success',
-    data: {
-      invoice: newInvoice
-    }
+    data: { invoice }
   });
-};
+});
 
-/**
- * Get all invoices with filtering, sorting, and pagination
- */
-exports.getAllInvoices = async (req, res) => {
-  // Create API features instance
-  const features = new APIFeatures(Invoice.find(), req.query)
-    .filter()
-    .sort()
-    .limitFields()
-    .paginate();
+exports.getInvoices = catchAsync(async (req, res) => {
+  // Pagination
+  const page = parseInt(req.query.page, 10) || 1;
+  const limit = parseInt(req.query.limit, 10) || 10;
+  const skip = (page - 1) * limit;
 
-  // Execute query
-  const invoices = await features.query.populate('customer', 'name email');
+  // Build query
+  const query = Invoice.find()
+    .populate('customer', 'name email')
+    .sort('-createdAt')
+    .skip(skip)
+    .limit(limit);
 
-  // Get total count for pagination (without pagination)
-  const count = await Invoice.countDocuments(features.query._conditions);
+  // Add filters
+  if (req.query.status) {
+    query.where('status').equals(req.query.status);
+  }
+  if (req.query.customer) {
+    query.where('customer').equals(req.query.customer);
+  }
 
-  // Send response
-  res.status(200).json({
+  // Execute query with total count
+  const [invoices, total] = await Promise.all([
+    query,
+    Invoice.countDocuments()
+  ]);
+
+  res.json({
     status: 'success',
     results: invoices.length,
     pagination: {
-      total: count,
-      page: req.query.page * 1 || 1,
-      limit: req.query.limit * 1 || 100
+      page,
+      pages: Math.ceil(total / limit),
+      total
     },
-    data: {
-      invoices
-    }
+    data: { invoices }
   });
-};
+});
 
-/**
- * Get a specific invoice by ID
- */
-exports.getInvoice = async (req, res, next) => {
-  const invoice = await Invoice.findById(req.params.id).populate('customer');
+exports.getInvoice = catchAsync(async (req, res) => {
+  const invoice = await Invoice.findById(req.params.id)
+    .populate('customer', 'name email')
+    .populate('createdBy', 'name');
 
   if (!invoice) {
-    return next(new AppError('No invoice found with that ID', 404));
+    throw new AppError('Invoice not found', 404);
   }
 
-  res.status(200).json({
+  res.json({
     status: 'success',
-    data: {
-      invoice
-    }
+    data: { invoice }
   });
-};
+});
 
-/**
- * Update an invoice
- */
-exports.updateInvoice = async (req, res, next) => {
-  // Check if invoice exists
-  const invoice = await Invoice.findById(req.params.id);
-  if (!invoice) {
-    return next(new AppError('No invoice found with that ID', 404));
-  }
+exports.updateInvoice = catchAsync(async (req, res) => {
+  // Validate input
+  const validatedData = await validateInvoiceInput(req.body);
 
-  // Check if status allows updates (don't allow updates to paid/cancelled invoices)
-  if (['paid', 'cancelled'].includes(invoice.status)) {
-    return next(new AppError(`Cannot update invoice with status: ${invoice.status}`, 400));
-  }
-
-  // If customer is being changed, verify new customer exists
-  if (req.body.customer && req.body.customer !== invoice.customer.toString()) {
-    const customer = await Customer.findById(req.body.customer);
-    if (!customer) {
-      return next(new AppError('New customer not found', 404));
-    }
-  }
-
-  // Calculate new total if items are updated
-  if (req.body.items) {
-    req.body.totalAmount = req.body.items.reduce((total, item) => {
-      return total + (item.quantity * item.unitPrice);
-    }, 0);
-  }
-
-  // Update the invoice
-  const updatedInvoice = await Invoice.findByIdAndUpdate(
+  const invoice = await Invoice.findByIdAndUpdate(
     req.params.id,
-    { ...req.body, lastModifiedBy: req.user._id },
+    {
+      ...validatedData,
+      lastModifiedBy: req.user._id
+    },
     {
       new: true,
       runValidators: true
     }
   );
 
-  res.status(200).json({
-    status: 'success',
-    data: {
-      invoice: updatedInvoice
-    }
-  });
-};
+  if (!invoice) {
+    throw new AppError('Invoice not found', 404);
+  }
 
-/**
- * Delete an invoice (soft delete)
- */
-exports.deleteInvoice = async (req, res, next) => {
+  res.json({
+    status: 'success',
+    data: { invoice }
+  });
+});
+
+exports.deleteInvoice = catchAsync(async (req, res) => {
   const invoice = await Invoice.findById(req.params.id);
 
   if (!invoice) {
-    return next(new AppError('No invoice found with that ID', 404));
+    throw new AppError('Invoice not found', 404);
   }
 
-  // Soft delete by updating status to cancelled
-  invoice.status = 'cancelled';
-  invoice.lastModifiedBy = req.user._id;
-  await invoice.save();
+  // Check if invoice can be deleted (e.g., not paid)
+  if (invoice.status === 'paid') {
+    throw new AppError('Paid invoices cannot be deleted', 400);
+  }
+
+  await invoice.remove();
 
   res.status(204).json({
     status: 'success',
     data: null
   });
-};
+});
 
-/**
- * Process a payment for an invoice
- */
-exports.processPayment = async (req, res, next) => {
-  const invoice = await Invoice.findById(req.params.id);
-
-  if (!invoice) {
-    return next(new AppError('No invoice found with that ID', 404));
-  }
-
-  if (invoice.status === 'paid') {
-    return next(new AppError('Invoice already paid', 400));
-  }
-
-  if (invoice.status === 'cancelled') {
-    return next(new AppError('Cannot pay a cancelled invoice', 400));
-  }
-
-  // Record payment
-  invoice.payments.push({
-    amount: req.body.amount,
-    method: req.body.method,
-    date: Date.now(),
-    recordedBy: req.user._id
-  });
-
-  // Calculate total paid amount
-  const totalPaid = invoice.payments.reduce((total, payment) => total + payment.amount, 0);
-
-  // Update invoice status based on payment
-  if (totalPaid >= invoice.totalAmount) {
-    invoice.status = 'paid';
-    invoice.paidAt = Date.now();
-  } else {
-    invoice.status = 'partial';
-  }
-
-  await invoice.save();
-
-  res.status(200).json({
-    status: 'success',
-    data: {
-      invoice
-    }
-  });
-};
-
-/**
- * Get invoice statistics (admin/manager only)
- */
-exports.getInvoiceStats = async (req, res) => {
-  const stats = await Invoice.aggregate([
-    {
-      $group: {
-        _id: '$status',
-        count: { $sum: 1 },
-        totalAmount: { $sum: '$totalAmount' }
+// Dashboard data with proper aggregation
+exports.getDashboardData = catchAsync(async (req, res) => {
+  const [invoices, stats] = await Promise.all([
+    Invoice.find()
+      .populate('customer', 'name')
+      .sort('-createdAt')
+      .limit(5),
+    Invoice.aggregate([
+      {
+        $group: {
+          _id: '$status',
+          count: { $sum: 1 },
+          totalAmount: { $sum: '$totalAmount' }
+        }
       }
-    }
+    ])
   ]);
 
-  // Calculate overdue invoices
-  const overdueInvoices = await Invoice.countDocuments({
-    status: { $in: ['pending', 'partial'] },
-    dueDate: { $lt: new Date() }
-  });
-
-  res.status(200).json({
+  res.json({
     status: 'success',
     data: {
-      stats,
-      overdue: overdueInvoices
+      recentInvoices: invoices,
+      stats
     }
   });
-};
-
-/**
- * Mark overdue invoices (admin/manager only)
- */
-exports.markOverdueInvoices = async (req, res) => {
-  // Find all invoices that are pending or partial and past due date
-  const result = await Invoice.updateMany(
-    {
-      status: { $in: ['pending', 'partial'] },
-      dueDate: { $lt: new Date() }
-    },
-    {
-      $set: { status: 'overdue', lastModifiedBy: req.user._id }
-    }
-  );
-
-  res.status(200).json({
-    status: 'success',
-    message: `${result.nModified} invoices marked as overdue`
-  });
-}; 
+});

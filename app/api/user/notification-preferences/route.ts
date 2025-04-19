@@ -1,14 +1,22 @@
-import { NextRequest, NextResponse } from "next/server";
+import {  NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { NotificationPreferences } from "@/lib/types";
 import { createEvent, EventSeverity } from "@/lib/events";
+import { rateLimit } from "@/lib/utils/rate-limit";
 
 /**
  * GET notification preferences for the authenticated user
  */
 export async function GET() {
   try {
+    const { success, error } = await rateLimit(
+      "user-notification-preferences"
+    );
+    if (!success) {
+      return NextResponse.json({ error }, { status: 429 });
+    }
+
     // Get authenticated user
     const session = await auth();
     if (!session?.user?.id) {
@@ -74,6 +82,13 @@ export async function GET() {
  */
 export async function PUT(req: NextRequest) {
   try {
+    const { success, error } = await rateLimit(
+      "user-notification-preferences"
+    );
+    if (!success) {
+      return NextResponse.json({ error }, { status: 429 });
+    }
+
     // Get authenticated user
     const session = await auth();
     if (!session?.user?.id) {

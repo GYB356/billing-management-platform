@@ -1,9 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import prisma from '@/lib/prisma';
-import { SubscriptionService } from '@/lib/services/subscription-service';
+import { PrismaClient } from '@prisma/client';
+import { SubscriptionService } from '@/lib/services/subscription-service/subscription-service';
+import { ISubscriptionService } from '@/lib/services/subscription-service/subscription-service.interface';
+import { InvoiceService } from '@/lib/services/invoice-service/invoice-service';
+import { UsageService } from '@/lib/services/usage-service/usage-service';
+import { Stripe } from 'stripe';
+import { EventManager } from '@/lib/services/event-manager';
+import { BackgroundJobManager } from '@/lib/services/background-job-manager';
+import { BackgroundJob } from '@/lib/services/background-job-manager/background-job';
+import { Config } from '@/lib/config';
 
+const prisma = new PrismaClient();
+const config = new Config();
+const stripe = new Stripe(config.stripe.secretKey as string, { apiVersion: '2023-10-16' });
+const eventManager = new EventManager();
+const backgroundJobManager = new BackgroundJobManager();
 export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
@@ -54,7 +67,16 @@ export async function POST(
     const { paymentMethodId } = await req.json();
 
     // Initialize the subscription service
-    const subscriptionService = new SubscriptionService();
+    const subscriptionService: ISubscriptionService = new SubscriptionService(
+      new InvoiceService(prisma, stripe, eventManager, config),
+      new UsageService(prisma, eventManager, config),
+      prisma,
+      stripe,
+      eventManager,
+      backgroundJobManager,
+      new BackgroundJob() ,
+      config
+    );
 
     // Retry the payment
     const result = await subscriptionService.retryFailedPayment({

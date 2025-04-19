@@ -3,7 +3,13 @@ import { OneTimePayment, PaymentStatus, Organization } from "@prisma/client";
 import { createEvent, EventSeverity } from "./events";
 import { createNotification } from "./notifications";
 import { NotificationChannel } from "./types";
-import { stripe } from "./stripe";
+import { handleApiError } from "./utils/error-handling";
+import { NextResponse } from "next/server";
+import { retryOperation } from "./utils/retry";
+import { createErrorResponse, createSuccessResponse } from "./utils/response-format";
+import * as stripe from "./stripe";
+import { rateLimit } from "./utils/rate-limit";import { LogLevel } from "./config";
+import { Config } from "./config";
 
 /**
  * Create a one-time payment
@@ -31,26 +37,46 @@ export async function createOneTimePayment({
   if (!organization) {
     throw new Error(`Organization with ID ${organizationId} not found`);
   }
+  
+  // Get the configuration
+  const config = Config.getConfig();
+
+  try {
+    await rateLimit(organization.stripeCustomerId || 'unknown_customer');
+  } catch (error) {
+    return createErrorResponse(error);
+  }
+
 
   // Create a payment intent in Stripe
-  let stripePaymentIntent;
-  try {
-    stripePaymentIntent = await stripe.paymentIntents.create({
-      amount,
-      currency,
-      description,
-      customer: organization.stripeCustomerId || undefined,
-      payment_method: paymentMethod,
-      confirm: !!paymentMethod,
-      metadata: {
+  let stripePaymentIntent
+  
+  try{
+    stripe.init(config.stripeSecretKey);
+    stripePaymentIntent = await retryOperation(() =>
+      stripe.paymentIntentsCreate({
+        amount,
+        currency,
+        description,
+        customer: organization.stripeCustomerId || undefined,
+        payment_method: paymentMethod,
+        confirm: !!paymentMethod,
+        metadata: {
+          organizationId,
+          type: "ONE_TIME_PAYMENT",
+          ...metadata,
+        },
         organizationId,
         type: "ONE_TIME_PAYMENT",
         ...metadata,
       },
     });
+    } catch (error) {
+    if (config.logLevel <= LogLevel.DEBUG) {
+      console.error("Error creating stripe payment intent:", error);
+    }
   } catch (error) {
-    console.error("Error creating payment intent:", error);
-    throw new Error(`Failed to create payment intent: ${(error as Error).message}`);
+    return createErrorResponse(error);
   }
 
   // Create the payment record in our database
@@ -95,8 +121,11 @@ export async function processSuccessfulPayment(
   paymentId: string,
   stripePaymentIntentId: string
 ): Promise<OneTimePayment> {
+    // Get the configuration
+  const config = Config.getConfig();
+  stripe.init(config.stripeSecretKey);
   // Get payment details from Stripe
-  const paymentIntent = await stripe.paymentIntents.retrieve(stripePaymentIntentId);
+  const paymentIntent = await stripe.paymentIntentsRetrieve(stripePaymentIntentId);
   
   // Find the payment in our database
   const payment = await prisma.oneTimePayment.findFirst({
@@ -280,8 +309,11 @@ export async function refundPayment({
   }
 
   // Process refund in Stripe
-  try {
-    await stripe.refunds.create({
+  // Get the configuration
+  const config = Config.getConfig();
+  stripe.init(config.stripeSecretKey);
+  try{
+    await stripe.refundsCreate({
       payment_intent: payment.stripeId,
       amount: amount || undefined, // If not provided, refund the full amount
       reason: (reason as "duplicate" | "fraudulent" | "requested_by_customer" | undefined) || "requested_by_customer",
@@ -333,7 +365,10 @@ export async function refundPayment({
 
     return updatedPayment;
   } catch (error) {
-    console.error("Error refunding payment:", error);
-    throw new Error(`Failed to refund payment: ${(error as Error).message}`);
+    if (config.logLevel <= LogLevel.DEBUG) {
+      console.error("Error refunding payment:", error);
+    }
+    return createErrorResponse(error);
+
   }
 } 

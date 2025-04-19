@@ -1,12 +1,25 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { prisma } from '@/lib/prisma';
+import { IPrisma } from '@/lib/types/prisma';
+import { IStripe } from '@/lib/types/stripe';
 import Stripe from 'stripe';
+import { InvoiceService, IInvoiceService } from '@/lib/services/invoice-service';
+import { UsageService, IUsageService } from '@/lib/services/usage-service';
+import { EventManager, IEventManager } from '@/lib/events';
+import { BackgroundJobManager, IBackgroundJobManager, IBackgroundJob } from '@/lib/background-jobs';
+import { SubscriptionService } from '@/lib/services/subscription-service';
+import { Config, IConfig } from '@/lib/config';
+import { PrismaClient } from '@prisma/client';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: '2023-10-16',
-});
+
+const prisma: IPrisma = new PrismaClient();
+const stripe: IStripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: '2023-10-16' });
+const invoiceService: IInvoiceService = new InvoiceService();
+const usageService: IUsageService = new UsageService();
+const eventManager: IEventManager = new EventManager();
+const backgroundJobManager: IBackgroundJobManager = new BackgroundJobManager();
+const config:IConfig = Config.getConfig();
 
 export async function POST(request: Request) {
   try {
@@ -23,6 +36,9 @@ export async function POST(request: Request) {
         { status: 400 }
       );
     }
+
+    const backgroundJob: IBackgroundJob =  new BackgroundJobManager();
+    const subscriptionService = new SubscriptionService(invoiceService, usageService, prisma, stripe, eventManager, backgroundJobManager, backgroundJob, config);
 
     // Get the active subscription
     const subscription = await prisma.subscription.findFirst({

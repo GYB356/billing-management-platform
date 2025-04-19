@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
+import { rateLimit } from "@/lib/utils/rate-limit";
 import { createEvent, EventSeverity } from "@/lib/events";
 import { randomUUID } from "crypto";
 
@@ -9,9 +10,17 @@ import { randomUUID } from "crypto";
  */
 export async function POST(req: NextRequest) {
   try {
+    const { success } = await rateLimit("user-push-subscription");
+    if (!success) {
+      return NextResponse.json(
+        { error: "Rate limit exceeded" },
+        { status: 429 }
+      );
+    }
     // Get authenticated user
     const session = await auth();
     if (!session?.user?.id) {
+      await rateLimit("user-push-subscription", session.user.id);
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -85,9 +94,17 @@ export async function POST(req: NextRequest) {
  */
 export async function PUT(req: NextRequest) {
   try {
+    const { success } = await rateLimit("user-push-subscription");
+    if (!success) {
+      return NextResponse.json(
+        { error: "Rate limit exceeded" },
+        { status: 429 }
+      );
+    }
     // Get authenticated user
     const session = await auth();
     if (!session?.user?.id) {
+      await rateLimit("user-push-subscription", session.user.id);
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -157,9 +174,17 @@ export async function PUT(req: NextRequest) {
  */
 export async function DELETE(req: NextRequest) {
   try {
+    const { success } = await rateLimit("user-push-subscription");
+    if (!success) {
+      return NextResponse.json(
+        { error: "Rate limit exceeded" },
+        { status: 429 }
+      );
+    }
     // Get authenticated user
     const session = await auth();
     if (!session?.user?.id) {
+      await rateLimit("user-push-subscription", session.user.id);
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 

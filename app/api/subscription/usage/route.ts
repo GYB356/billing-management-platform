@@ -1,18 +1,33 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { prisma } from '@/lib/prisma';
-import Stripe from 'stripe';
+import { IPrisma, Prisma } from '@/lib/prisma';
+import { IStripe, Stripe } from '@/lib/stripe';
+import { Stripe as StripeClient } from 'stripe';
+import { InvoiceService, IInvoiceService } from '@/lib/services/invoice-service';
+import { UsageService, IUsageService } from '@/lib/services/usage-service';
+import { EventManager, IEventManager } from '@/lib/events';
+import { BackgroundJobManager, IBackgroundJobManager, IBackgroundJob, BackgroundJob } from '@/lib/background-jobs';
+import { BackgroundJob } from '@/lib/background-jobs/background-job';
+import { Config, IConfig } from '@/lib/config';
+import { SubscriptionService } from '@/lib/services/subscription-service';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: '2023-10-16',
-});
+const prisma: IPrisma = new Prisma();
+const stripe: IStripe = new StripeClient(process.env.STRIPE_SECRET_KEY!, { apiVersion: '2023-10-16' });
+const config: IConfig = new Config()
 
 export async function POST(request: Request) {
   try {
     const session = await getServerSession(authOptions);
     if (!session?.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const invoiceService: IInvoiceService = new InvoiceService(prisma, stripe);
+    const usageService: IUsageService = new UsageService(prisma, stripe);
+    const eventManager: IEventManager = new EventManager();
+    const backgroundJobManager: IBackgroundJobManager = new BackgroundJobManager()
+    const subscriptionService = new SubscriptionService(invoiceService, usageService, prisma, stripe, eventManager, backgroundJobManager, config);
     }
 
     const { featureId, quantity } = await request.json();

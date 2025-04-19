@@ -1,10 +1,23 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { prisma } from '@/lib/prisma';
-import { resumeSubscription } from '@/lib/services/subscription-service';
 import { z } from 'zod';
+import { IPrisma } from '@/lib/prisma';
+import { PrismaClient } from '@/lib/prisma';
+import { SubscriptionService } from '@/lib/services/subscription-service';
+import { IInvoiceService, InvoiceService } from '@/lib/services/invoice-service';
+import { IUsageService, UsageService } from '@/lib/services/usage-service';
+import { IStripe } from '@/lib/stripe';
+import { Stripe } from '@/lib/stripe';
+import { IEventManager, EventManager } from '@/lib/events/events';
+import { IBackgroundJobManager, BackgroundJobManager } from '@/lib/background-jobs/background-job-manager';
+import { Config, IConfig } from '@/lib/config';
+import { Config } from '@/lib/config';
 
+const prisma = new PrismaClient();
+const stripe = new Stripe(Config.getConfig().stripe.secretKey, { apiVersion: '2023-10-16', typescript: true });
+const eventManager = EventManager.getInstance();
+const backgroundJobManager = BackgroundJobManager.getInstance();
 // Validation schema for request
 const resumeSubscriptionSchema = z.object({
   subscriptionId: z.string(),
@@ -55,7 +68,14 @@ export async function POST(request: Request) {
     }
 
     // Use the subscription service to resume the subscription
-    const updatedSubscription = await resumeSubscription(subscriptionId);
+    const invoiceService: IInvoiceService = new InvoiceService();
+    const usageService: IUsageService = new UsageService();
+
+    const subscriptionService = new SubscriptionService(invoiceService, usageService, prisma, stripe, eventManager, backgroundJobManager, Config.getConfig(), BackgroundJob
+    );
+
+
+    const updatedSubscription = await subscriptionService.resumeSubscription(subscriptionId);
 
     return NextResponse.json(updatedSubscription);
   } catch (error: any) {

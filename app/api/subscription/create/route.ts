@@ -1,13 +1,26 @@
 import { NextResponse } from 'next/server';
-import Stripe from 'stripe';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { prisma } from '@/lib/prisma';
+import { PrismaClient } from '@prisma/client';
+import { InvoiceService } from '@/lib/services/invoice-service';
+import { UsageService } from '@/lib/services/usage-service';
+import { Stripe } from 'stripe';
+import { EventManager } from '@/lib/events';
+import { BackgroundJobManager } from '@/lib/background-jobs/background-job-manager';
+import { BackgroundJob } from '@/lib/background-jobs/background-job';
+import { Config } from '@/lib/config';
+import { IPrisma, IStripe, IEventManager, IBackgroundJobManager, IConfig } from '@/lib/services/types';
+import { SubscriptionService } from '@/lib/services/subscription-service';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+const prisma: IPrisma = new PrismaClient();
+const stripe: IStripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: '2023-10-16',
 });
+const eventManager: IEventManager = new EventManager();
+const backgroundJobManager: IBackgroundJobManager = new BackgroundJobManager();
+const config: IConfig = Config.getConfig();
 
+const subscriptionService = new SubscriptionService(new InvoiceService(), new UsageService(), prisma, stripe, eventManager, backgroundJobManager, BackgroundJob, config);
 export async function POST(request: Request) {
   try {
     const session = await getServerSession(authOptions);
@@ -22,10 +35,10 @@ export async function POST(request: Request) {
     const { email, cardNumber, expiryDate, cvv, name } = body;
 
     // Create a payment method
-    const paymentMethod = await stripe.paymentMethods.create({
+    const paymentMethod = await (stripe as Stripe).paymentMethods.create({
       type: 'card',
       card: {
-        number: cardNumber,
+          number: cardNumber,
         exp_month: parseInt(expiryDate.split('/')[0]),
         exp_year: parseInt(expiryDate.split('/')[1]),
         cvc: cvv,
@@ -42,7 +55,7 @@ export async function POST(request: Request) {
     });
 
     if (!customer) {
-      const stripeCustomer = await stripe.customers.create({
+      const stripeCustomer = await (stripe as Stripe).customers.create({
         email,
         payment_method: paymentMethod.id,
         invoice_settings: {
@@ -60,23 +73,12 @@ export async function POST(request: Request) {
     }
 
     // Create a subscription
-    const subscription = await stripe.subscriptions.create({
+    const subscription = await (stripe as Stripe).subscriptions.create({
       customer: customer.stripeCustomerId,
       items: [{ price: process.env.STRIPE_PRICE_ID }], // You'll need to set this in your .env
       payment_behavior: 'default_incomplete',
       payment_settings: { save_default_payment_method: 'on_subscription' },
       expand: ['latest_invoice.payment_intent'],
-    });
-
-    // Store subscription details in your database
-    await prisma.subscription.create({
-      data: {
-        customerId: customer.id,
-        stripeSubscriptionId: subscription.id,
-        status: subscription.status,
-        currentPeriodStart: new Date(subscription.current_period_start * 1000),
-        currentPeriodEnd: new Date(subscription.current_period_end * 1000),
-      },
     });
 
     return NextResponse.json({
@@ -91,4 +93,4 @@ export async function POST(request: Request) {
       { status: 500 }
     );
   }
-} 
+}

@@ -1,15 +1,32 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import prisma from '@/lib/prisma';
-import { stripe } from '@/lib/stripe';
+import { IPrisma } from '@/lib/prisma';
+import { IStripe } from '@/lib/stripe';
+import { InvoiceService, IInvoiceService } from '@/lib/services/invoice-service';
+import { UsageService, IUsageService } from '@/lib/services/usage-service';
+import { SubscriptionService } from '@/lib/services/subscription-service';
+import { EventManager, IEventManager } from '@/lib/events';
+import { BackgroundJobManager, IBackgroundJobManager, IBackgroundJob } from '@/lib/background-jobs/background-job-manager';
+import { Config, IConfig } from '@/lib/config';
+import { PrismaClient } from '@prisma/client';
+import Stripe from 'stripe';
 
 export async function GET() {
   try {
     const session = await getServerSession(authOptions);
     if (!session?.user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }); 
     }
+    const prisma = new PrismaClient();
+    const config: IConfig = new Config();
+    const stripe: IStripe = new Stripe(config.stripeSecretKey, { apiVersion: '2023-10-16' });
+    const invoiceService: IInvoiceService = new InvoiceService(prisma);
+    const usageService: IUsageService = new UsageService(prisma);
+    const eventManager: IEventManager = new EventManager();
+    const backgroundJobManager: IBackgroundJobManager = new BackgroundJobManager();
+    const backgroundJob: IBackgroundJob = new BackgroundJobManager();
+    const subscriptionService = new SubscriptionService(invoiceService, usageService, prisma, stripe, eventManager, backgroundJobManager, config, backgroundJob);
 
     // Get customer with active subscription
     const customer = await prisma.customer.findUnique({
@@ -35,12 +52,14 @@ export async function GET() {
     }
 
     // Get the default payment method
-    const stripeCustomer = await stripe.customers.retrieve(customer.stripeCustomerId);
     let paymentMethod = null;
 
     if (stripeCustomer.invoice_settings.default_payment_method) {
-      const pm = await stripe.paymentMethods.retrieve(
-        stripeCustomer.invoice_settings.default_payment_method as string
+        const pm = await stripe.paymentMethods.retrieve(
+        stripeCustomer.invoice_settings.default_payment_method as string,
+        {
+          expand: ['billing_details.address'],
+        }
       );
 
       if (pm.type === 'card') {
@@ -55,7 +74,7 @@ export async function GET() {
     }
 
     // Get usage data if applicable
-    const usage = await prisma.usage.findMany({
+    const usage = await prisma.usage.findMany({ 
       where: {
         subscriptionId: subscription.id,
         timestamp: {
@@ -100,7 +119,7 @@ export async function GET() {
   } catch (error) {
     console.error('Subscription fetch error:', error);
     return NextResponse.json(
-      { error: 'Failed to fetch subscription data' },
+      { error: 'Failed to fetch subscription data' }, 
       { status: 500 }
     );
   }

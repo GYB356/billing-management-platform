@@ -1,13 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { prisma } from '@/lib/prisma';
 import { calculateUsageCharges } from '@/lib/usage';
+import { InvoiceService } from '@/lib/services/invoice-service';
+import { UsageService } from '@/lib/services/usage-service';
+import { PrismaClient } from '@prisma/client';
+import { Stripe } from 'stripe';
+import { EventManager } from '@/lib/events';
+import { BackgroundJobManager } from '@/lib/background-jobs/background-job-manager';
+import { BackgroundJob } from '@/lib/background-jobs/background-job';
+import { Config } from '@/lib/config';
+import { IPrisma } from '@/lib/prisma';
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } } // Using 'id' consistently
+  { params }: { params: { id: string } }
 ) {
+  const prisma: IPrisma = new PrismaClient();
   try {
     const session = await getServerSession(authOptions);
     if (!session) {
@@ -16,7 +25,7 @@ export async function GET(
 
     const subscriptionId = params.id;
 
-    // Verify user has access to this subscription
+    // Verify user has access to this subscription    
     const subscription = await prisma.subscription.findUnique({
       where: { id: subscriptionId },
       include: {
@@ -51,7 +60,7 @@ export async function GET(
     const currentPeriodStart = subscription.currentPeriodStart || new Date();
     const currentPeriodEnd = subscription.currentPeriodEnd || new Date();
 
-    const usageRecords = await prisma.usageRecord.findMany({
+    const usageRecords = await prisma.usageRecord.findMany({      
       where: {
         subscriptionId,
         recordedAt: {
@@ -94,9 +103,9 @@ export async function GET(
     return NextResponse.json({
       subscription,
       features,
-    });
+    });    
   } catch (error) {
-    console.error('Error fetching subscription data:', error);
+    console.error('Error fetching subscription data:', error);    
     return new NextResponse('Internal Server Error', { status: 500 });
   }
 }

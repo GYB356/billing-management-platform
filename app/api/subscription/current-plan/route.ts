@@ -1,92 +1,71 @@
-import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
-import { prisma } from '@/lib/prisma';
-import { stripe } from '@/lib/stripe';
+import { NextRequest, NextResponse } from 'next/server'
+import { getServerSession } from 'next-auth/next'
+import { authOptions } from '@/lib/auth'
+import { PrismaClient } from '@prisma/client'
+import { InvoiceService, type IInvoiceService } from '@/lib/services/invoice-service'
+import { UsageService, type IUsageService } from '@/lib/services/usage-service'
+import { Stripe as StripeClient, type Stripe } from 'stripe'
+import { EventManager, type IEventManager } from '@/lib/events'
+import { BackgroundJobManager, type IBackgroundJobManager } from '@/lib/background-jobs/background-job-manager'
+import { Config, type IConfig } from '@/lib/config'
+import { SubscriptionService, type ISubscriptionService } from '@/lib/services/subscription-service'
+import { IPrisma } from '@/lib/prisma'
+import { IBackgroundJob } from '@/lib/background-jobs/background-job'
+import { BackgroundJob } from '@/lib/background-jobs/background-job'
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const session = await getServerSession(authOptions)
+  if (!session?.user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const prisma: IPrisma = new PrismaClient()
+  const config: IConfig = Config.getConfig()
+  const stripe: Stripe = new StripeClient(config.stripe.secretKey)
+  const eventManager: IEventManager = new EventManager()
+  const backgroundJobManager: IBackgroundJobManager = new BackgroundJobManager(prisma)
+  const backgroundJob: IBackgroundJob = BackgroundJob
+  
+  const invoiceService: IInvoiceService = new InvoiceService(
+    prisma,
+    stripe,
+    eventManager,
+  )
+  const usageService: IUsageService = new UsageService(
+    prisma,
+    stripe,
+    eventManager,
+  )
+
+  const subscriptionService: ISubscriptionService = new SubscriptionService(
+    invoiceService,
+    usageService,
+    prisma,
+    stripe,
+    eventManager,
+    backgroundJobManager,
+    backgroundJob,
+    config,
+  )
+
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const subscriptions = await subscriptionService.getCurrentPlan({
+      userId: session.user.id,
+    })
 
-    // Get active subscription
-    const subscription = await prisma.subscription.findFirst({
-      where: {
-        userId: session.user.id,
-        status: { in: ['ACTIVE', 'TRIALING'] },
-      },
-      include: {
-        plan: {
-          include: {
-            features: true,
-          },
-        },
-      },
-    });
+    if (subscriptions.length === 0) {
+        return NextResponse.json({
+          message: 'No current subscriptions found',
+        }, { status: 200 })
+      }
+    const subscription = subscriptions[0]
 
-    if (!subscription) {
-      return NextResponse.json(
-        { error: 'No active subscription found' },
-        { status: 404 }
-      );
-    }
+    return NextResponse.json({
+      subscription: subscription,
+    }, { status: 200 })
 
-    // Get current billing period usage
-    const currentPeriodUsage = await prisma.usageRecord.findMany({
-      where: {
-        subscriptionId: subscription.id,
-        timestamp: {
-          gte: subscription.currentPeriodStart,
-          lte: subscription.currentPeriodEnd,
-        },
-      },
-      include: {
-        feature: true,
-      },
-    });
-
-    // Calculate feature usage and limits
-    const features = subscription.plan.features.map(feature => {
-      const featureUsage = currentPeriodUsage
-        .filter(record => record.featureId === feature.id)
-        .reduce((sum, record) => sum + record.quantity, 0);
-
-      return {
-        id: feature.id,
-        name: feature.name,
-        description: feature.description,
-        included: feature.includedUnits,
-        current: featureUsage,
-        limit: feature.usageLimit,
-        overage: Math.max(featureUsage - (feature.includedUnits || 0), 0),
-        overageRate: feature.overageUnitPrice,
-      };
-    });
-
-    // Format plan details
-    const formattedPlan = {
-      id: subscription.plan.id,
-      name: subscription.plan.name,
-      description: subscription.plan.description,
-      price: subscription.plan.price,
-      currency: subscription.plan.currency,
-      interval: subscription.plan.interval,
-      features: features,
-      status: subscription.status,
-      currentPeriodStart: subscription.currentPeriodStart,
-      currentPeriodEnd: subscription.currentPeriodEnd,
-      cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
-      trialEnd: subscription.trialEnd,
-    };
-
-    return NextResponse.json(formattedPlan);
   } catch (error) {
-    console.error('Error fetching current plan:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch current plan' },
-      { status: 500 }
-    );
+    console.error('Error getting current plan:', error)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

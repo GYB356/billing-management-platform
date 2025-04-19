@@ -4,10 +4,30 @@ if (!process.env.STRIPE_SECRET_KEY) {
   throw new Error('STRIPE_SECRET_KEY is not set');
 }
 
-// Initialize Stripe with your secret key
-export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: '2023-08-16', // Use the consistent API version
+// Initialize Stripe with your secret key and API version
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+  apiVersion: '2023-08-16',
 });
+
+// Abstraction layer for Stripe API methods
+const stripeApi = {
+  customers: {
+    create: async (params: Stripe.CustomerCreateParams) => stripe.customers.create(params),
+  },
+  subscriptions: {
+    create: async (params: Stripe.SubscriptionCreateParams) => stripe.subscriptions.create(params),
+    cancel: async (subscriptionId: string, params?:Stripe.SubscriptionCancelParams ) => stripe.subscriptions.cancel(subscriptionId, params),
+    retrieve: async (subscriptionId:string, params?: Stripe.SubscriptionRetrieveParams) => stripe.subscriptions.retrieve(subscriptionId, params),
+  },
+  paymentIntents: {
+    create: async (params: Stripe.PaymentIntentCreateParams) => stripe.paymentIntents.create(params),
+    refund: async (paymentIntentId: string, params?: Stripe.PaymentIntentRefundParams) => stripe.paymentIntents.create(params),
+  },
+  webhooks: {
+    constructEvent: (payload: string | Buffer, headers: string | Stripe.StripeHeader, secret: string, tolerance?: number) => stripe.webhooks.constructEvent(payload, headers, secret, tolerance),
+  },
+};
+export {stripeApi}
 
 // Helper function to format amount for display
 export function formatAmount(amount: number, currency: string = 'usd'): string {
@@ -54,26 +74,6 @@ export function getPlanDisplayName(planId: string): string {
 }
 
 /**
- * Create a customer in Stripe
- */
-export async function createStripeCustomer(userId: string, email: string, name?: string) {
-  try {
-    const customer = await stripe.customers.create({
-      email,
-      name,
-      metadata: {
-        userId,
-      },
-    });
-    
-    return customer;
-  } catch (error) {
-    console.error('Error creating Stripe customer:', error);
-    throw error;
-  }
-}
-
-/**
  * Get or create a customer in Stripe
  */
 export async function getOrCreateStripeCustomer(userId: string, email: string, name?: string) {
@@ -97,16 +97,16 @@ export async function getOrCreateStripeCustomer(userId: string, email: string, n
     }
     
     // If no customer exists, create a new one
-    return await createStripeCustomer(userId, email, name);
+    return await stripeApi.customers.create({email,
+        name,
+        metadata: {
+          userId,
+        },});
   } catch (error) {
     console.error('Error getting or creating Stripe customer:', error);
     throw error;
   }
 }
-
-/**
- * Create a subscription
- */
 export async function createSubscription(
   customerId: string,
   priceId: string,
@@ -128,18 +128,13 @@ export async function createSubscription(
     }
     
     // Create the subscription
-    const subscription = await stripe.subscriptions.create({
+    const subscription = await stripeApi.subscriptions.create({
       customer: customerId,
       items: [{ price: priceId }],
       expand: ['latest_invoice.payment_intent'],
     });
     
     return subscription;
-  } catch (error) {
-    console.error('Error creating subscription:', error);
-    throw error;
-  }
-}
 
 /**
  * Cancel a subscription
@@ -153,6 +148,14 @@ export async function cancelSubscription(subscriptionId: string, cancelAtPeriodE
     return subscription;
   } catch (error) {
     console.error('Error canceling subscription:', error);
+    throw error;
+  }
+}
+
+
+
+  } catch (error) {
+    console.error('Error creating subscription:', error);
     throw error;
   }
 }
@@ -184,4 +187,4 @@ export async function updateSubscription(
     console.error('Error updating subscription:', error);
     throw error;
   }
-} 
+}

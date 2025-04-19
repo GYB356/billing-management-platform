@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { I18nService, SupportedLocale } from '@/lib/i18n-service';
+import { rateLimit } from '@/lib/utils/rate-limit';
 import { z } from 'zod';
 
 // Schema for language preference update
@@ -14,9 +15,16 @@ const updateLanguageSchema = z.object({
 
 // GET /api/user/preferences/language
 export async function GET(req: NextRequest) {
+  const session = await getServerSession(authOptions);
+  const identifier = session?.user?.id ? `${session.user.id}-user-preferences-language` : 'user-preferences-language';
+  const { success, reset } = await rateLimit(identifier)
+  if (!success) {
+    return new NextResponse(JSON.stringify({ error: 'Rate limit exceeded', reset }), {
+      status: 429,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
   try {
-    const session = await getServerSession(authOptions);
-    
     if (!session?.user?.id) {
       return new NextResponse(JSON.stringify({ error: 'Unauthorized' }), {
         status: 401,
@@ -56,9 +64,16 @@ export async function GET(req: NextRequest) {
 
 // PUT /api/user/preferences/language
 export async function PUT(req: NextRequest) {
+  const session = await getServerSession(authOptions);
+  const identifier = session?.user?.id ? `${session.user.id}-user-preferences-language` : 'user-preferences-language';
+  const { success, reset } = await rateLimit(identifier)
+  if (!success) {
+    return new NextResponse(JSON.stringify({ error: 'Rate limit exceeded', reset }), {
+      status: 429,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
   try {
-    const session = await getServerSession(authOptions);
-    
     if (!session?.user?.id) {
       return new NextResponse(JSON.stringify({ error: 'Unauthorized' }), {
         status: 401,
